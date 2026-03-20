@@ -675,6 +675,70 @@ td.gold  { color: var(--gold-l);  font-family: var(--mono); font-size: 12.5px; f
   #print-zone { position: fixed; inset: 0; padding: 16px; background: #fff; }
 }
 
+
+/* ── ANTI-FLASH ── */
+html.ube-authed #screen-login { display:none !important; }
+html.ube-authed #app          { display:flex !important; }
+
+/* ── SYNC INDICATOR ── */
+.sync-indicator {
+  display:flex;align-items:center;gap:5px;
+  padding:4px 9px;border-radius:5px;
+  background:none;border:none;
+  font-size:11px;font-weight:600;color:var(--text-3);
+  flex-shrink:0;white-space:nowrap;transition:color .3s;
+}
+.sync-dot {
+  width:6px;height:6px;border-radius:50%;
+  background:var(--text-3);flex-shrink:0;transition:background .3s;
+}
+.sync-indicator.synced   { color:var(--green-l); }
+.sync-indicator.synced   .sync-dot { background:var(--green-l); }
+.sync-indicator.unsynced { color:var(--red); }
+.sync-indicator.unsynced .sync-dot { background:var(--red); }
+.sync-indicator.syncing  { color:var(--gold-l); }
+.sync-indicator.syncing  .sync-dot { background:var(--gold-l);animation:pulse .9s infinite; }
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ── THEME TOGGLE ── */
+.theme-toggle {
+  width:32px;height:32px;border-radius:50%;
+  background:var(--ink-3);border:1px solid var(--line);
+  cursor:pointer;font-size:15px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  transition:all .2s;
+}
+.theme-toggle:hover{background:var(--ink-4);transform:rotate(20deg);}
+
+/* ── LEDGER TABS ── */
+.ledger-tabs{display:flex;gap:0;flex:1;}
+.ltab{
+  padding:8px 16px;font-size:12px;font-weight:600;
+  color:var(--text-2);cursor:pointer;border:none;background:none;
+  border-bottom:2px solid transparent;transition:all .15s;
+}
+.ltab:hover{color:var(--text);}
+.ltab.active{color:var(--gold-l);border-bottom-color:var(--gold);}
+
+/* ── PAYMENT HISTORY ITEMS ── */
+.ph-item{
+  display:flex;align-items:center;gap:12px;
+  padding:12px 16px;border-bottom:1px solid var(--line);
+  transition:background .1s;
+}
+.ph-item:last-child{border-bottom:none;}
+.ph-item:hover{background:var(--ink-3);}
+.ph-dot{
+  width:36px;height:36px;border-radius:50%;
+  background:rgba(31,184,90,.12);border:1px solid rgba(31,184,90,.25);
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;flex-shrink:0;
+}
+.ph-info{flex:1;min-width:0;}
+.ph-amt{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--green-l);}
+.ph-meta{font-size:11.5px;color:var(--text-2);margin-top:2px;}
+.ph-date{font-size:12px;color:var(--text-3);flex-shrink:0;text-align:right;}
+
 </style>
 
 
@@ -755,6 +819,11 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
         <span class="si">⌕</span>
         <input type="text" placeholder="Search…" id="global-srch" oninput="UI.globalSearch(this.value)">
       </div>
+      <div class="sync-indicator" id="sync-indicator" title="Firebase sync status">
+        <span class="sync-dot" id="sync-dot"></span>
+        <span class="sync-txt" id="sync-txt">…</span>
+      </div>
+      <button id="sync-btn" onclick="DATABASE.syncNow()" title="Force sync to Firebase" style="background:none;border:none;cursor:pointer;font-size:11px;color:var(--text-3);padding:4px 8px;border-radius:4px;transition:color .15s;font-family:var(--ff);" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--text-3)'">↑ Sync</button>
       <button class="theme-toggle" id="theme-btn" onclick="UI.toggleTheme()" title="Toggle light/dark mode">🌙</button>
     </div>
 
@@ -763,6 +832,7 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
       <!-- DASHBOARD -->
       <div class="page active" id="page-dashboard">
         <div class="dash-grid" id="dash-cards"></div>
+        <div id="dash-overdue-alert"></div>
         <div class="qa-grid">
           <div class="qa-btn" onclick="SALE.openForm()">
             <div class="qa-ico">➕</div>
@@ -830,6 +900,7 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
             </div>
             <div class="flex-g">
               <button class="btn btn-ghost btn-xs" onclick="LEDGER.exportCSV()">↓ Export</button>
+              <button class="btn btn-ghost btn-xs" id="ledger-wa-btn">📱 WhatsApp</button>
               <button class="btn btn-gold btn-xs" id="ledger-pay-btn">+ Payment</button>
             </div>
           </div>
@@ -844,6 +915,7 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
           <button class="rtab" onclick="REPORT.show('top-customers',this)">Customers</button>
           <button class="rtab" onclick="REPORT.show('top-products',this)">Products</button>
           <button class="rtab" onclick="REPORT.show('pending',this)">Pending</button>
+          <button class="rtab" onclick="REPORT.show('overdue',this)">Overdue</button>
         </div>
         <div id="report-content"></div>
       </div>
@@ -878,23 +950,38 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
         </div>
 
         <div class="sec-title mt16">Data Management</div>
-        <div class="set-item">
-          <div><div class="set-lbl">Backup Database</div><div class="set-sub">Download all data as JSON file</div></div>
-          <button class="btn btn-gold btn-sm" onclick="EXPORT.backup()">↓ Backup</button>
-        </div>
-        <div class="set-item">
-          <div><div class="set-lbl">Restore from Backup</div><div class="set-sub">Import a JSON backup file</div></div>
-          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('restore-file').click()">↑ Restore</button>
-          <input type="file" id="restore-file" accept=".json" style="display:none" onchange="EXPORT.restore(this)">
-        </div>
-        <div class="set-item">
-          <div><div class="set-lbl">Export Customers CSV</div><div class="set-sub">All customer records</div></div>
-          <button class="btn btn-ghost btn-sm" onclick="EXPORT.csv('customers')">↓ CSV</button>
-        </div>
-        <div class="set-item">
-          <div><div class="set-lbl">Export Sales CSV</div><div class="set-sub">All transactions</div></div>
-          <button class="btn btn-ghost btn-sm" onclick="EXPORT.csv('sales')">↓ CSV</button>
-        </div>
+
+        <div class="card mb12"><div class="card-head"><div class="card-title">Backup &amp; Restore</div></div><div class="card-body">
+          <div class="set-item" style="border:none;padding:0 0 10px 0">
+            <div><div class="set-lbl">Full JSON Backup</div><div class="set-sub">Download complete database as JSON</div></div>
+            <button class="btn btn-gold btn-sm" onclick="EXPORT.backup()">↓ Backup</button>
+          </div>
+          <div class="set-item" style="border:none;padding:0">
+            <div><div class="set-lbl">Restore from Backup</div><div class="set-sub">Restore all data from JSON backup</div></div>
+            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('restore-file').click()">↑ Restore</button>
+            <input type="file" id="restore-file" accept=".json" style="display:none" onchange="EXPORT.restore(this)">
+          </div>
+        </div></div>
+
+        <div class="card mb12"><div class="card-head"><div class="card-title">Export CSV</div></div><div class="card-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="EXPORT.csv('customers')">↓ Customers</button>
+            <button class="btn btn-ghost btn-sm" onclick="EXPORT.csv('products')">↓ Products</button>
+            <button class="btn btn-ghost btn-sm" onclick="EXPORT.csv('sales')">↓ Sales</button>
+            <button class="btn btn-ghost btn-sm" onclick="EXPORT.csv('payments')">↓ Payments</button>
+          </div>
+        </div></div>
+
+        <div class="card mb12"><div class="card-head"><div class="card-title">Import CSV</div><div style="font-size:11px;color:var(--text-3)">Merges safely — skips existing records</div></div><div class="card-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('imp-cust').click()">↑ Import Customers</button>
+            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('imp-prod').click()">↑ Import Products</button>
+          </div>
+          <div style="font-size:11.5px;color:var(--text-3);margin-top:8px">Use exported CSV format. Duplicates skipped by phone/name.</div>
+          <input type="file" id="imp-cust" accept=".csv" style="display:none" onchange="EXPORT.importCSV(this,'customers')">
+          <input type="file" id="imp-prod" accept=".csv" style="display:none" onchange="EXPORT.importCSV(this,'products')">
+        </div></div>
+
         <div class="set-item" style="border-color:rgba(229,62,90,0.18)">
           <div><div class="set-lbl" style="color:var(--red)">Reset All Data</div><div class="set-sub">Permanently delete everything</div></div>
           <button class="btn btn-danger btn-sm" onclick="SETTINGS.reset()">Reset</button>
@@ -968,6 +1055,7 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
         <div class="field"><label>Selling Price (₹) *</label><input type="number" id="p-price" placeholder="0" min="0" inputmode="decimal"></div>
         <div class="field"><label>Stock Quantity</label><input type="number" id="p-stock" placeholder="0" min="0" inputmode="numeric"></div>
       </div>
+
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="UI.closeModal('m-product')">Cancel</button>
@@ -1159,14 +1247,13 @@ const DATABASE = (() => {
 
   const KEY = APP_CONFIG.DB_KEY;
 
-  // In-memory data store – the single source of truth for all modules
   const DB = {
     customers: [],
     products:  [],
     sales:     [],
     payments:  [],
     settings: {
-      name:     'Unique Borebits Engineering',
+      name:     APP_CONFIG.APP_NAME,
       phone:    '',
       email:    '',
       gst:      '',
@@ -1174,27 +1261,69 @@ const DATABASE = (() => {
       username: 'admin',
       password: 'admin123'
     },
-    _cid: 1,
-    _pid: 1,
-    _sid: 1,
-    _inv: 1
+    _cid: 1, _pid: 1, _sid: 1, _inv: 1
   };
 
-  /* ── SAVE ── persists to localStorage AND Firebase */
+  // ── SYNC STATUS ──────────────────────────────────────────────
+  function setSync(state, msg) {
+    // state: 'synced' | 'unsynced' | 'syncing'
+    const ind = document.getElementById('sync-indicator');
+    const txt = document.getElementById('sync-txt');
+    if (!ind || !txt) return;
+    ind.className = 'sync-indicator ' + state;
+    txt.textContent = msg;
+  }
+
+  // ── SAVE ─────────────────────────────────────────────────────
+  // Always saves to localStorage first (instant), then Firebase
+  // Never overwrites Firebase with empty/partial data
   function save() {
+    // Guard: never save empty DB to Firebase
+    const isEmpty = !DB.customers.length && !DB.products.length &&
+                    !DB.sales.length && !DB.payments.length;
+
+    // 1. Always save to localStorage
     try {
       localStorage.setItem(KEY, JSON.stringify(DB));
-      if (typeof db !== 'undefined') {
-        db.ref(APP_CONFIG.FB_PATH).update(DB);
-      }
     } catch (e) {
-      console.error('DB save failed', e);
+      console.error('[DB] localStorage save failed:', e);
+    }
+
+    // 2. Save to Firebase (skip if DB is empty — prevents overwrite)
+    if (typeof db !== 'undefined' && !isEmpty) {
+      setSync('syncing', 'Saving…');
+      db.ref(APP_CONFIG.FB_PATH).update(DB)
+        .then(() => setSync('synced', 'Synced'))
+        .catch(e => {
+          console.error('[DB] Firebase save failed:', e);
+          setSync('unsynced', 'Not synced');
+          TOAST.show('Cloud save failed — data saved locally', 'info');
+        });
     }
   }
 
-  /* ── LOAD ── reads localStorage first, then starts Firebase live sync */
+  // ── MERGE ────────────────────────────────────────────────────
+  // Safely merge cloud data into DB, taking whichever has more data
+  function mergeCloud(cloud) {
+    if (!cloud) return;
+
+    // Use cloud arrays if they have MORE data (prevents data loss)
+    if ((cloud.customers||[]).length >= DB.customers.length) DB.customers = cloud.customers || [];
+    if ((cloud.products||[]).length  >= DB.products.length)  DB.products  = cloud.products  || [];
+    if ((cloud.sales||[]).length     >= DB.sales.length)     DB.sales     = cloud.sales     || [];
+    if ((cloud.payments||[]).length  >= DB.payments.length)  DB.payments  = cloud.payments  || [];
+
+    Object.assign(DB.settings, cloud.settings || {});
+    // Take the higher counter values to prevent ID collisions
+    DB._cid = Math.max(DB._cid, cloud._cid || 1);
+    DB._pid = Math.max(DB._pid, cloud._pid || 1);
+    DB._sid = Math.max(DB._sid, cloud._sid || 1);
+    DB._inv = Math.max(DB._inv, cloud._inv || 1);
+  }
+
+  // ── LOAD ─────────────────────────────────────────────────────
   function load() {
-    // 1. Local storage (fast, offline-capable)
+    // 1. localStorage — instant, works offline
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {
@@ -1210,66 +1339,121 @@ const DATABASE = (() => {
         DB._inv = parsed._inv || 1;
       }
     } catch (e) {
-      console.error('Local load failed', e);
+      console.error('[DB] localStorage load failed:', e);
     }
 
-    // 2. Firebase real-time sync (authoritative cloud copy)
+    // 2. Firebase realtime sync — cloud is authoritative
     if (typeof db !== 'undefined') {
-      db.ref(APP_CONFIG.FB_PATH).on('value', snapshot => {
-        const cloud = snapshot.val();
-        if (cloud && Object.keys(cloud).length > 0) {
-          DB.customers = cloud.customers || [];
-          DB.products  = cloud.products  || [];
-          DB.sales     = cloud.sales     || [];
-          DB.payments  = cloud.payments  || [];
-          Object.assign(DB.settings, cloud.settings || {});
-          DB._cid = cloud._cid || 1;
-          DB._pid = cloud._pid || 1;
-          DB._sid = cloud._sid || 1;
-          DB._inv = cloud._inv || 1;
-
-          // Mirror back to localStorage so offline works
-          localStorage.setItem(KEY, JSON.stringify(DB));
-          console.log('Firebase sync successful');
-
-          // Re-render any mounted views
-          if (typeof DASHBOARD !== 'undefined') DASHBOARD.render();
-          if (typeof CUSTOMER  !== 'undefined') CUSTOMER.render(DB.customers);
-          if (typeof PRODUCT   !== 'undefined') PRODUCT.render(DB.products);
-          if (typeof SALE      !== 'undefined') SALE.render(DB.sales);
-          if (typeof PAYMENT   !== 'undefined') PAYMENT.render();
+      // Monitor connection state
+      db.ref('.info/connected').on('value', snap => {
+        if (snap.val() === true) {
+          setSync('synced', 'Synced');
+        } else {
+          setSync('unsynced', 'Offline');
         }
       });
+
+      // Live sync listener — on() fires on connect + every change
+      db.ref(APP_CONFIG.FB_PATH).on('value', snapshot => {
+        try {
+          const cloud = snapshot.val();
+
+          // Guard: ignore empty/null cloud data
+          if (!cloud || typeof cloud !== 'object') {
+            console.log('[DB] Cloud empty — keeping local data');
+            setSync('synced', 'Synced');
+            return;
+          }
+
+          // Guard: ignore cloud if it has NO records at all
+          const cloudHasData = (cloud.customers||[]).length > 0 ||
+                               (cloud.products||[]).length  > 0 ||
+                               (cloud.sales||[]).length     > 0;
+          if (!cloudHasData) {
+            console.log('[DB] Cloud has no records — keeping local data');
+            // Push local to cloud if we have data
+            const localHasData = DB.customers.length || DB.products.length || DB.sales.length;
+            if (localHasData) save();
+            return;
+          }
+
+          mergeCloud(cloud);
+
+          // Mirror merged result back to localStorage
+          localStorage.setItem(KEY, JSON.stringify(DB));
+          setSync('synced', 'Synced');
+          console.log('[DB] Cloud sync OK — customers:', DB.customers.length, 'sales:', DB.sales.length);
+
+          // Re-render current view
+          try {
+            if (typeof DASHBOARD !== 'undefined') DASHBOARD.render();
+            if (typeof CUSTOMER  !== 'undefined') CUSTOMER.render(DB.customers);
+            if (typeof PRODUCT   !== 'undefined') PRODUCT.render(DB.products);
+            if (typeof SALE      !== 'undefined') SALE.render(DB.sales);
+            if (typeof PAYMENT   !== 'undefined') PAYMENT.render();
+          } catch(renderErr) {
+            console.error('[DB] Re-render failed:', renderErr);
+          }
+        } catch (e) {
+          console.error('[DB] Sync error:', e);
+          setSync('unsynced', 'Sync error');
+        }
+      });
+    } else {
+      setSync('unsynced', 'No Firebase');
     }
   }
 
-  /* ── RESET ── wipes all data (double-confirmed via UI) */
+  // ── SYNC NOW ─────────────────────────────────────────────────
+  // Manual force-push to Firebase
+  function syncNow() {
+    const btn = document.getElementById('sync-btn');
+    if (btn) { btn.textContent = '↑ Syncing…'; btn.disabled = true; }
+    setSync('syncing', 'Syncing…');
+
+    try {
+      localStorage.setItem(KEY, JSON.stringify(DB));
+    } catch(e) { console.error('[DB] localStorage syncNow failed:', e); }
+
+    if (typeof db !== 'undefined') {
+      db.ref(APP_CONFIG.FB_PATH).set(DB)
+        .then(() => {
+          setSync('synced', 'Synced');
+          TOAST.show('✓ Synced to cloud successfully', 'ok');
+          if (btn) { btn.textContent = '↑ Sync'; btn.disabled = false; }
+        })
+        .catch(e => {
+          console.error('[DB] syncNow failed:', e);
+          setSync('unsynced', 'Not synced');
+          TOAST.show('Cloud sync failed — check connection', 'err');
+          if (btn) { btn.textContent = '↑ Sync'; btn.disabled = false; }
+        });
+    } else {
+      TOAST.show('Firebase not available', 'err');
+      if (btn) { btn.textContent = '↑ Sync'; btn.disabled = false; }
+    }
+  }
+
+  // ── RESET ────────────────────────────────────────────────────
   function reset() {
-    DB.customers = [];
-    DB.products  = [];
-    DB.sales     = [];
-    DB.payments  = [];
-    DB._cid = 1;
-    DB._pid = 1;
-    DB._sid = 1;
-    DB._inv = 1;
+    DB.customers = []; DB.products = []; DB.sales = []; DB.payments = [];
+    DB._cid = 1; DB._pid = 1; DB._sid = 1; DB._inv = 1;
     save();
   }
 
-  return { DB, save, load, reset };
+  return { DB, save, load, reset, syncNow, setSync };
 })();
 
-// Expose DB at module level so all other modules can import it directly
 const { DB } = DATABASE;
 
-// Auto-save on page hide / unload
-window.addEventListener('beforeunload',    () => DATABASE.save());
-window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') DATABASE.save(); });
-window.addEventListener('pagehide',        () => DATABASE.save());
+// Auto-save every 5 seconds (belt + suspenders)
+setInterval(() => DATABASE.save(), 5000);
 
-/* ════════════════════════════════
-   UTILITY MODULE
-════════════════════════════════ */
+// Save on page hide/close
+window.addEventListener('beforeunload',     () => DATABASE.save());
+window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') DATABASE.save(); });
+window.addEventListener('pagehide',         () => DATABASE.save());
+
 const UTIL = {
   money(n)   { return '₹' + (+n||0).toLocaleString('en-IN', { minimumFractionDigits:0, maximumFractionDigits:2 }); },
   num(n)     { return (+n||0).toLocaleString('en-IN'); },
@@ -1287,6 +1471,28 @@ const UTIL = {
   },
   custTotal(cid)   { return DB.sales.filter(s => s.cid === cid).reduce((a, s) => a + (s.total   || 0), 0); },
   custPending(cid) { return DB.sales.filter(s => s.cid === cid).reduce((a, s) => a + (s.pending || 0), 0); },
+  askPassword(action) {
+    // Returns true if password matches, false otherwise
+    const pwd = prompt('Enter password to ' + action + ':');
+    if (pwd === null) return false; // cancelled
+    if (pwd !== DB.settings.password) {
+      TOAST.show('Wrong password — ' + action + ' cancelled', 'err');
+      return false;
+    }
+    return true;
+  },
+
+  daysSince(dateStr) {
+    if (!dateStr) return 0;
+    return Math.floor((new Date() - new Date(dateStr)) / 86400000);
+  },
+  overdueLabel(days) {
+    if (days > 90) return { txt:'90+ days', cls:'bg-red',   urgent:true  };
+    if (days > 60) return { txt:'60+ days', cls:'bg-red',   urgent:true  };
+    if (days > 30) return { txt:'30+ days', cls:'bg-gold',  urgent:false };
+    if (days > 0 ) return { txt:`${days}d`,  cls:'bg-gray',  urgent:false };
+    return null;
+  },
   download(content, filename, type = 'text/plain') {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([content], { type }));
@@ -1465,6 +1671,24 @@ const DASHBOARD = {
       <div class="dash-card c-red"><div class="dc-ico">⏳</div><div class="dc-val c-red">${UTIL.money(totalPnd)}</div><div class="dc-lbl">Pending Payments</div></div>
       <div class="dash-card c-${lowStock > 0 ? 'red' : 'green'}"><div class="dc-ico">📦</div><div class="dc-val c-${lowStock > 0 ? 'red' : 'green'}">${lowStock}</div><div class="dc-lbl">Low Stock Items</div></div>`;
 
+    // Overdue alert banner
+    const overdueCustomers = DB.customers.filter(c => {
+      const unpaid = DB.sales.filter(s => s.cid === c.id && s.pending > 0);
+      return unpaid.some(s => UTIL.daysSince(s.date) > 30);
+    });
+    const alertBanner = document.getElementById('dash-overdue-alert');
+    if (alertBanner) {
+      if (overdueCustomers.length > 0) {
+        alertBanner.innerHTML = `<div style="background:rgba(229,62,90,.08);border:1px solid rgba(229,62,90,.25);border-radius:var(--r2);padding:10px 14px;margin-bottom:14px;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <span style="color:var(--red)">⚠ <strong>${overdueCustomers.length}</strong> customer${overdueCustomers.length!==1?'s have':' has'} payments overdue 30+ days</span>
+          <button class="btn btn-danger btn-xs" onclick="UI.nav('reports',null);setTimeout(()=>REPORT.show('overdue',document.querySelector('.rtab:last-child')),100)">View Overdue →</button>
+        </div>`;
+        alertBanner.style.display = 'block';
+      } else {
+        alertBanner.style.display = 'none';
+      }
+    }
+
     const rec = document.getElementById('dash-recent');
     if (!DB.sales.length) {
       rec.innerHTML = UI.empty('📋', 'No sales yet', 'Use the New Sale button to record your first transaction.', '+ New Sale', 'SALE.openForm()');
@@ -1510,8 +1734,13 @@ const CUSTOMER = {
   save() {
     const name  = document.getElementById('c-name').value.trim();
     const phone = document.getElementById('c-phone').value.trim();
-    if (!name)  { TOAST.show('Name is required',  'err'); return; }
-    if (!phone) { TOAST.show('Phone is required', 'err'); return; }
+    if (!name)  { TOAST.show('Customer name is required', 'err'); return; }
+    if (!phone) { TOAST.show('Phone number is required', 'err'); return; }
+    if (!/^[0-9+\-\s]{6,15}$/.test(phone)) { TOAST.show('Enter a valid phone number', 'err'); return; }
+    // Duplicate phone check
+    const eid_val = document.getElementById('c-eid').value;
+    const dupPhone = DB.customers.find(c => c.phone === phone && String(c.id) !== eid_val);
+    if (dupPhone) { TOAST.show('Phone number already used by ' + dupPhone.name, 'err'); return; }
     const eid = document.getElementById('c-eid').value;
     if (eid) {
       const c = DB.customers.find(x => x.id === parseInt(eid));
@@ -1539,7 +1768,10 @@ const CUSTOMER = {
   },
 
   delete(id) {
-    if (!confirm('Delete this customer? Sales records will remain.')) return;
+    const c = DB.customers.find(x => x.id === id);
+    if (!c) return;
+    if (!confirm('Delete customer "' + c.name + '"? Their sales history will remain.')) return;
+    if (!UTIL.askPassword('delete customer')) return;
     DB.customers = DB.customers.filter(x => x.id !== id);
     DATABASE.save();
     this.render(DB.customers);
@@ -1641,7 +1873,10 @@ const PRODUCT = {
   },
 
   delete(id) {
-    if (!confirm('Delete this product?')) return;
+    const p = DB.products.find(x => x.id === id);
+    if (!p) return;
+    if (!confirm('Delete product "' + p.name + '"? This cannot be undone.')) return;
+    if (!UTIL.askPassword('delete product')) return;
     DB.products = DB.products.filter(x => x.id !== id);
     DATABASE.save();
     this.render(DB.products);
@@ -1771,11 +2006,13 @@ const SALE = {
     const paid  = parseFloat(document.getElementById('s-paid').value)  || 0;
     const sdate = document.getElementById('s-date').value;
 
-    if (!cid)    { TOAST.show('Select a customer', 'err'); return; }
-    if (!pid)    { TOAST.show('Select a product',  'err'); return; }
-    if (qty <= 0)  { TOAST.show('Quantity must be > 0', 'err'); return; }
-    if (price <= 0){ TOAST.show('Enter a valid price',  'err'); return; }
-    if (!sdate)  { TOAST.show('Select a date', 'err'); return; }
+    if (!cid)      { TOAST.show('Select a customer', 'err'); return; }
+    if (!pid)      { TOAST.show('Select a product', 'err'); return; }
+    if (!sdate)    { TOAST.show('Select a date', 'err'); return; }
+    if (qty <= 0)  { TOAST.show('Quantity must be at least 1', 'err'); return; }
+    if (price <= 0){ TOAST.show('Enter a valid price greater than 0', 'err'); return; }
+    if (paid < 0)  { TOAST.show('Amount paid cannot be negative', 'err'); return; }
+    if (paid > qty * price) { TOAST.show('Amount paid cannot exceed total', 'err'); return; }
 
     const prod = DB.products.find(x => x.id === pid);
     if (prod && prod.stock < qty) {
@@ -1870,6 +2107,15 @@ const PAYMENT = {
     if (amt <= 0) { TOAST.show('Enter a valid amount', 'err'); return; }
     if (!this._cid) return;
 
+    // Guard: cap payment to actual pending total — prevent overpayment
+    const totalPending = UTIL.custPending(this._cid);
+    if (amt > totalPending) {
+      TOAST.show('Amount exceeds pending balance of ' + UTIL.money(totalPending), 'err');
+      // Auto-correct the field to the max pending amount
+      document.getElementById('pay-amt').value = totalPending.toFixed(2);
+      return;
+    }
+
     // Distribute oldest-first
     let rem = amt;
     DB.sales
@@ -1918,7 +2164,10 @@ const PAYMENT = {
       const pct = c.total > 0 ? Math.min(100, (c.pending / c.total) * 100) : 0;
       return `<div class="pay-row">
         <div class="pay-info">
-          <div class="pay-name">${UTIL.esc(c.name)}</div>
+          <div class="pay-name" style="display:flex;align-items:center;gap:8px">
+            ${UTIL.esc(c.name)}
+            ${(()=>{ const oldest=DB.sales.filter(s=>s.cid===c.id&&s.pending>0).sort((a,b)=>new Date(a.date)-new Date(b.date))[0]; if(!oldest) return ''; const d=UTIL.daysSince(oldest.date); const lbl=UTIL.overdueLabel(d); return lbl?`<span class="badge ${lbl.cls}" style="font-size:9px">${lbl.txt} overdue</span>`:''; })()}
+          </div>
           <div class="pay-meta">📞 ${UTIL.esc(c.phone)}${c.location ? ' · 📍 ' + UTIL.esc(c.location) : ''}</div>
           <div class="pay-prog"><div class="prog"><div class="prog-fill pf-red" style="width:${pct}%"></div></div></div>
         </div>
@@ -1940,6 +2189,7 @@ const PAYMENT = {
 ════════════════════════════════ */
 const LEDGER = {
   _tab: 'sales',
+  _phAsc: false, // false = latest first (default)
 
   open(cid) {
     UI._curLedgerCid = cid;
@@ -1974,6 +2224,15 @@ const LEDGER = {
       </div>`;
 
     document.getElementById('ledger-pay-btn').onclick = () => PAYMENT.openForCustomer(cid);
+    const waBtn = document.getElementById('ledger-wa-btn');
+    if (waBtn) {
+      waBtn.onclick = () => {
+        const msg = pending > 0
+          ? `Dear ${c.name}, your current outstanding balance with ${DB.settings.name} is ${UTIL.money(pending)}. Kindly arrange payment at your earliest convenience. Thank you.`
+          : `Dear ${c.name}, thank you for clearing all dues with ${DB.settings.name}. Your account is fully settled. 🙏`;
+        window.open('https://wa.me/91' + c.phone.replace(/\D/g,'') + '?text=' + encodeURIComponent(msg), '_blank');
+      };
+    }
 
     // Reset tabs
     document.querySelectorAll('.ltab').forEach(t => t.classList.remove('active'));
@@ -2025,43 +2284,96 @@ const LEDGER = {
   },
 
   renderPaymentsTab(cid) {
-    const payments = DB.payments
-      .filter(p => p.cid === cid)
-      .sort((a, b) => new Date(b.date) - new Date(a.date));
     const el = document.getElementById('ledger-tbl');
+    const methodIcons = { Cash:'💵', UPI:'📱', 'Bank Transfer':'🏦', Cheque:'📄', default:'💳' };
 
-    if (!payments.length) {
-      el.innerHTML = UI.empty('💳', 'No payments yet', 'No payments have been recorded for this customer.');
+    // Build unified timeline: initial payment at time of sale + subsequent payments
+    const timeline = [];
+
+    // 1. Add initial paid amounts from each sale (the amount paid at time of purchase)
+    DB.sales
+      .filter(s => s.cid === cid && s.paid > 0)
+      .forEach(s => {
+        const prod = DB.products.find(x => x.id === s.pid);
+        timeline.push({
+          date:   s.date,
+          id:     s.id,        // use sale id as order tiebreaker
+          amount: s.paid,
+          method: s.method,
+          note:   'At purchase — ' + (prod?.name || s.inv),
+          type:   'sale',
+          inv:    s.inv
+        });
+      });
+
+    // 2. Add all subsequent payments recorded via Payments page
+    DB.payments
+      .filter(p => p.cid === cid)
+      .forEach(p => {
+        timeline.push({
+          date:   p.date,
+          id:     p.id,        // id=Date.now() at time of recording
+          amount: p.amount,
+          method: p.method,
+          note:   p.note || '',
+          type:   'payment'
+        });
+      });
+
+    // Sort by date + id timestamp — id used as tiebreaker for same-day entries
+    timeline.sort((a, b) => {
+      const dateDiff = new Date(a.date) - new Date(b.date);
+      const tiebreak = (a.id || 0) - (b.id || 0); // id=Date.now() for payments, 0 for sale entries
+      const diff = dateDiff !== 0 ? dateDiff : tiebreak;
+      return LEDGER._phAsc ? diff : -diff;
+    });
+
+    if (!timeline.length) {
+      el.innerHTML = UI.empty('💳', 'No payments yet', 'No payments received from this customer yet.');
       return;
     }
 
-    const totalPaid = payments.reduce((a, p) => a + p.amount, 0);
-    const methodIcons = { Cash:'💵', UPI:'📱', 'Bank Transfer':'🏦', Cheque:'📄', default:'💳' };
+    const totalPaid = timeline.reduce((a, t) => a + t.amount, 0);
 
-    const items = payments.map((p, i) => {
-      const icon = methodIcons[p.method] || methodIcons.default;
+    const items = timeline.map((t, i) => {
+      const icon = methodIcons[t.method] || methodIcons.default;
+      const isSale = t.type === 'sale';
       return `<div class="ph-item">
-        <div class="ph-dot">${icon}</div>
+        <div class="ph-dot" style="background:${isSale ? 'rgba(59,130,246,.12)' : 'rgba(31,184,90,.12)'};border-color:${isSale ? 'rgba(59,130,246,.3)' : 'rgba(31,184,90,.3)'}">
+          ${isSale ? '🛒' : icon}
+        </div>
         <div class="ph-info">
-          <div class="ph-amt">${UTIL.money(p.amount)}</div>
-          <div class="ph-meta">
-            <span class="badge bg-gray" style="font-size:10px">${UTIL.esc(p.method)}</span>
-            ${p.note ? ` &nbsp;·&nbsp; <span style="color:var(--text-2)">${UTIL.esc(p.note)}</span>` : ''}
+          <div class="ph-amt">${UTIL.money(t.amount)}</div>
+          <div class="ph-meta" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span class="badge ${isSale ? 'bg-blue' : 'bg-gray'}" style="font-size:10px">${UTIL.esc(t.method)}</span>
+            ${isSale ? `<span class="badge bg-gray" style="font-size:9px">INITIAL</span>` : ''}
+            ${t.note ? `<span style="font-size:11px;color:var(--text-2)">${UTIL.esc(t.note)}</span>` : ''}
           </div>
         </div>
         <div class="ph-date">
-          <div style="font-weight:600;color:var(--text)">${UTIL.fmtDate(p.date)}</div>
-          <div style="font-size:10px;color:var(--text-3);margin-top:2px">#${i+1} of ${payments.length}</div>
+          <div style="font-weight:600;color:var(--text)">${UTIL.fmtDate(t.date)}</div>
+          <div style="font-size:10px;color:var(--text-3);margin-top:2px">${i + 1} of ${timeline.length}</div>
         </div>
       </div>`;
     }).join('');
 
-    el.innerHTML = `
-      <div style="padding:10px 16px;background:var(--gold-f);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:12px;color:var(--text-2)">${payments.length} payment${payments.length!==1?'s':''} received</span>
-        <span style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--green-l)">${UTIL.money(totalPaid)} total</span>
-      </div>
-      ${items}`;
+    const sortLabel = LEDGER._phAsc ? '↑ Oldest first' : '↓ Latest first';
+    el.innerHTML =
+      '<div style="padding:10px 16px;background:var(--gold-f);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+        '<div><span style="font-size:12px;color:var(--text-2)">' +
+          timeline.length + ' payment' + (timeline.length!==1?'s':'') + ' total' +
+          ' &nbsp;·&nbsp; ' + DB.payments.filter(p=>p.cid===cid).length + ' collected separately' +
+          ' &nbsp;·&nbsp; ' + DB.sales.filter(s=>s.cid===cid&&s.paid>0).length + ' at purchase' +
+        '</span></div>' +
+        '<div style="display:flex;align-items:center;gap:10px">' +
+          '<button onclick="LEDGER._phAsc=!LEDGER._phAsc;LEDGER.showTab(\'payments\',null)" ' +
+            'style="background:none;border:1px solid var(--line);border-radius:4px;padding:4px 10px;font-size:11px;color:var(--text-2);cursor:pointer;font-family:var(--ff)">' +
+            sortLabel +
+          '</button>' +
+          '<span style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--green-l)">' + UTIL.money(totalPaid) + ' total</span>' +
+        '</div>' +
+      '</div>' +
+      items;
   },
 
   exportCSV() {
@@ -2101,20 +2413,33 @@ const INVOICE = {
     const cfg = DB.settings;
     const logoSrc = document.querySelector('.login-logo-img')?.src || '';
 
-    const html = `<div class="inv-doc" id="inv-printable">
+    // GST calculation
+    const gstRate    = p?.gst_rate || 0;
+    const taxable    = s.total;
+    const gstAmount  = Math.round((taxable * gstRate / 100) * 100) / 100;
+    const grandTotal = taxable + gstAmount;
+    const halfGst    = gstAmount / 2;
+
+    const gstBlock = gstRate > 0 ? `
+      <div class="inv-tot-row"><span style="color:#888">Taxable Value</span><span>&#8377;${taxable.toLocaleString('en-IN')}</span></div>
+      <div class="inv-tot-row"><span style="color:#888">CGST @ ${gstRate/2}%</span><span>&#8377;${halfGst.toLocaleString('en-IN',{minimumFractionDigits:2})}</span></div>
+      <div class="inv-tot-row"><span style="color:#888">SGST @ ${gstRate/2}%</span><span>&#8377;${halfGst.toLocaleString('en-IN',{minimumFractionDigits:2})}</span></div>
+      <div class="inv-tot-row" style="border-top:1px solid #e5e7eb;padding-top:6px;margin-top:2px;font-weight:700"><span>Grand Total (incl. GST)</span><span>&#8377;${grandTotal.toLocaleString('en-IN',{minimumFractionDigits:2})}</span></div>` : '';
+
+    const invoiceHtml = `<div class="inv-doc" id="inv-printable">
       <div class="inv-head">
         <div class="inv-co">
-          <img class="inv-co-logo" src="${logoSrc}" alt="Logo" onerror="this.style.display='none'">
+          <img class="inv-co-logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" style="width:54px;height:54px;border-radius:10px;object-fit:cover;flex-shrink:0">
           <div>
             <div class="inv-co-name">${UTIL.esc(cfg.name)}</div>
             <div class="inv-co-sub">Borewell Drilling Tools &amp; Equipment</div>
-            <div class="inv-co-detail">${UTIL.esc(cfg.phone)}${cfg.email ? ' · ' + UTIL.esc(cfg.email) : ''}</div>
-            ${cfg.gst     ? `<div class="inv-co-detail">GST: ${UTIL.esc(cfg.gst)}</div>`       : ''}
-            ${cfg.address ? `<div class="inv-co-detail">${UTIL.esc(cfg.address)}</div>`          : ''}
+            <div class="inv-co-detail">${UTIL.esc(cfg.phone)}${cfg.email?' &middot; '+UTIL.esc(cfg.email):''}</div>
+            ${cfg.gst ? `<div class="inv-co-detail"><strong>GSTIN:</strong> ${UTIL.esc(cfg.gst)}</div>` : ''}
+            ${cfg.address ? `<div class="inv-co-detail">${UTIL.esc(cfg.address)}</div>` : ''}
           </div>
         </div>
         <div style="text-align:right">
-          <div class="inv-no-lbl">Invoice</div>
+          <div class="inv-no-lbl">Tax Invoice</div>
           <div class="inv-no-val">${UTIL.esc(s.inv)}</div>
           <div class="inv-no-date">Date: ${UTIL.fmtDate(s.date)}</div>
         </div>
@@ -2124,47 +2449,42 @@ const INVOICE = {
         <div>
           <div class="inv-pl">Bill To</div>
           <div class="inv-pn">${UTIL.esc(c?.name||'Customer')}</div>
-          <div class="inv-pd">📞 ${UTIL.esc(c?.phone||'—')}</div>
-          ${c?.location ? `<div class="inv-pd">📍 ${UTIL.esc(c.location)}</div>` : ''}
+          <div class="inv-pd">&#128222; ${UTIL.esc(c?.phone||'—')}</div>
+          ${c?.location ? `<div class="inv-pd">&#128205; ${UTIL.esc(c.location)}</div>` : ''}
         </div>
         <div>
-          <div class="inv-pl">Payment Details</div>
+          <div class="inv-pl">Payment</div>
           <div class="inv-pn">${UTIL.esc(s.method)}</div>
-          <div class="inv-pd">${s.pending === 0 ? '✅ Fully Paid' : '⚠ Partial Payment'}</div>
+          <div class="inv-pd">${s.pending === 0 ? '&#10004; Fully Paid' : '&#9888; Partial Payment'}</div>
+          ${s.notes ? `<div class="inv-pd" style="font-style:italic;margin-top:4px">${UTIL.esc(s.notes)}</div>` : ''}
         </div>
       </div>
       <table class="inv-tbl">
-        <thead><tr><th>#</th><th>Description</th><th>Category</th><th>Size</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr></thead>
-        <tbody>
-          <tr>
-            <td>1</td>
-            <td><strong>${UTIL.esc(p?.name||'—')}</strong></td>
-            <td>${UTIL.esc(p?.category||'—')}</td>
-            <td>${UTIL.esc(p?.size||'—')}</td>
-            <td>${s.qty}</td>
-            <td>₹${(s.price||0).toLocaleString('en-IN')}</td>
-            <td><strong>₹${s.total.toLocaleString('en-IN')}</strong></td>
-          </tr>
-        </tbody>
+        <thead><tr><th>#</th><th>Description</th><th>Size</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr></thead>
+        <tbody><tr>
+          <td>1</td>
+          <td><strong>${UTIL.esc(p?.name||'—')}</strong><br><span style="font-size:11px;color:#888">${UTIL.esc(p?.category||'')}</span></td>
+          <td style="font-size:12px;color:#888">${UTIL.esc(p?.hsn||'—')}</td>
+          <td>${UTIL.esc(p?.size||'—')}</td>
+          <td>${s.qty}</td>
+          <td>&#8377;${(s.price||0).toLocaleString('en-IN')}</td>
+          <td>${gstRate}%</td>
+          <td><strong>&#8377;${s.total.toLocaleString('en-IN')}</strong></td>
+        </tr></tbody>
       </table>
-      <div class="inv-totals">
-        <div class="inv-tot-box">
-          <div class="inv-tot-row"><span>Subtotal</span><span>₹${s.total.toLocaleString('en-IN')}</span></div>
-          <div class="inv-tot-row paid"><span>Amount Paid</span><span>₹${s.paid.toLocaleString('en-IN')}</span></div>
-          ${s.pending > 0 ? `<div class="inv-tot-row bal"><span>Balance Due</span><span>₹${s.pending.toLocaleString('en-IN')}</span></div>` : ''}
-          <div class="inv-tot-row final"><span>Total</span><span>₹${s.total.toLocaleString('en-IN')}</span></div>
-        </div>
-      </div>
-      ${s.notes ? `<div style="margin-top:12px;padding:9px 12px;background:#f8f9fa;border-radius:4px;font-size:12px;color:#666"><strong>Notes:</strong> ${UTIL.esc(s.notes)}</div>` : ''}
-      <div class="inv-footer">
-        ${UTIL.esc(cfg.name)}<br>
-        Thank you for your business! · Computer generated invoice — No signature required.
-      </div>
+      <div class="inv-totals"><div class="inv-tot-box">
+        <div class="inv-tot-row paid"><span>Amount Paid</span><span>&#8377;${s.paid.toLocaleString('en-IN')}</span></div>
+        ${s.pending > 0 ? `<div class="inv-tot-row bal"><span>Balance Due</span><span>&#8377;${s.pending.toLocaleString('en-IN')}</span></div>` : '<div class="inv-tot-row" style="color:#16a34a"><span>&#10004; Paid in Full</span><span></span></div>'}
+        <div class="inv-tot-row final"><span>Invoice Total</span><span>&#8377;${s.total.toLocaleString('en-IN')}</span></div>
+      </div></div>
+
+      <div class="inv-footer">${UTIL.esc(cfg.name)}<br>Thank you for your business! &middot; Computer generated invoice — No signature required.</div>
     </div>`;
 
-    document.getElementById('invoice-body').innerHTML = html;
+    document.getElementById('invoice-body').innerHTML = invoiceHtml;
     UI.openModal('m-invoice');
   },
+
 
   print() {
     const el = document.getElementById('inv-printable');
@@ -2303,7 +2623,7 @@ const SETTINGS = {
 
   reset() {
     if (!confirm('Permanently delete ALL data? This cannot be undone.')) return;
-    if (!confirm('Final confirmation: delete everything?')) return;
+    if (!UTIL.askPassword('reset ALL data')) return;
     DATABASE.reset();
     TOAST.show('All data cleared', 'info');
     DASHBOARD.render();
@@ -2315,11 +2635,17 @@ const SETTINGS = {
    EXPORT MODULE
 ════════════════════════════════ */
 const EXPORT = {
+
+  // ── JSON BACKUP ────────────────────────────────────────────
   backup() {
-    UTIL.download(JSON.stringify(DB, null, 2), `borebits-backup-${UTIL.today()}.json`, 'application/json');
-    TOAST.show('Backup downloaded', 'info');
+    try {
+      UTIL.download(JSON.stringify(DB, null, 2),
+        'borebits-backup-' + UTIL.today() + '.json', 'application/json');
+      TOAST.show('Full backup downloaded', 'info');
+    } catch(e) { TOAST.show('Backup failed', 'err'); console.error(e); }
   },
 
+  // ── JSON RESTORE ───────────────────────────────────────────
   restore(input) {
     const file = input.files[0];
     if (!file) return;
@@ -2327,48 +2653,166 @@ const EXPORT = {
     r.onload = e => {
       try {
         const d = JSON.parse(e.target.result);
-        if (!d.customers || !d.products || !d.sales) { TOAST.show('Invalid backup file', 'err'); return; }
-        if (!confirm('Replace all current data with backup?')) return;
+        if (!Array.isArray(d.customers) || !Array.isArray(d.products) || !Array.isArray(d.sales)) {
+          TOAST.show('Invalid backup file — missing required data', 'err'); return;
+        }
+        if (!confirm('Replace ALL current data with this backup? This cannot be undone.')) return;
+        if (!UTIL.askPassword('restore backup')) return;
         Object.assign(DB, d);
         DATABASE.save();
         DASHBOARD.render();
         UI.updatePayBadge();
-        TOAST.show('Data restored');
-      } catch { TOAST.show('Failed to read backup', 'err'); }
+        TOAST.show('Data restored from backup ✓', 'ok');
+      } catch(err) {
+        TOAST.show('Failed to read backup file', 'err');
+        console.error('[RESTORE]', err);
+      }
     };
     r.readAsText(file);
     input.value = '';
   },
 
+  // ── CSV EXPORT ─────────────────────────────────────────────
   csv(type) {
-    let csv = '', fn = '';
-    if (type === 'customers') {
-      csv = 'Name,Phone,Location,Total Sales,Pending,Joined\n';
-      DB.customers.forEach(c => {
-        csv += `"${c.name}","${c.phone}","${c.location||''}",${UTIL.custTotal(c.id)},${UTIL.custPending(c.id)},"${c.created||''}"\n`;
-      });
-      fn = 'customers.csv';
-    } else if (type === 'products') {
-      csv = 'Name,Category,Size,Price,Stock\n';
-      DB.products.forEach(p => { csv += `"${p.name}","${p.category}","${p.size||''}",${p.price},${p.stock}\n`; });
-      fn = 'products.csv';
-    } else if (type === 'sales') {
-      csv = 'Invoice,Date,Customer,Product,Qty,Price,Total,Paid,Pending,Method\n';
-      DB.sales.forEach(s => {
-        const c = DB.customers.find(x => x.id === s.cid);
-        const p = DB.products.find(x => x.id === s.pid);
-        csv += `"${s.inv}","${s.date}","${c?.name||''}","${p?.name||''}",${s.qty},${s.price},${s.total},${s.paid},${s.pending},"${s.method}"\n`;
-      });
-      fn = 'sales.csv';
-    } else if (type === 'payments') {
-      csv = 'Customer,Phone,Total,Paid,Pending\n';
-      DB.customers.forEach(c => {
-        const t = UTIL.custTotal(c.id), pd = UTIL.custPending(c.id), pa = t - pd;
-        if (t > 0) csv += `"${c.name}","${c.phone}",${t},${pa},${pd}\n`;
-      });
-      fn = 'payments.csv';
+    try {
+      let csv = '', fn = '';
+      if (type === 'customers') {
+        csv = 'Name,Phone,Location,Notes,Total Sales,Pending,Joined\n';
+        DB.customers.forEach(c => {
+          csv += '"'+c.name+'","'+c.phone+'","'+(c.location||'')+'","'+(c.notes||'')+'",'+
+                 UTIL.custTotal(c.id)+','+UTIL.custPending(c.id)+',"'+(c.created||'')+'"\n';
+        });
+        fn = 'UBE-customers-' + UTIL.today() + '.csv';
+
+      } else if (type === 'products') {
+        csv = 'Name,Category,Size,Price,Stock\n';
+        DB.products.forEach(p => {
+          csv += '"'+p.name+'","'+(p.category||'')+'","'+(p.size||'')+'",'+p.price+','+p.stock+'\n';
+        });
+        fn = 'UBE-products-' + UTIL.today() + '.csv';
+
+      } else if (type === 'sales') {
+        csv = 'Invoice,Date,Customer,Product,Qty,UnitPrice,Total,Paid,Pending,Method,Notes\n';
+        DB.sales.forEach(s => {
+          const c = DB.customers.find(x => x.id === s.cid);
+          const p = DB.products.find(x => x.id === s.pid);
+          csv += '"'+s.inv+'","'+s.date+'","'+(c?.name||'')+'","'+(p?.name||'')+'",'+
+                 s.qty+','+s.price+','+s.total+','+s.paid+','+s.pending+',"'+s.method+'","'+(s.notes||'')+'"\n';
+        });
+        fn = 'UBE-sales-' + UTIL.today() + '.csv';
+
+      } else if (type === 'payments') {
+        // Full payment transaction history (not just summary)
+        csv = 'Date,Customer,Phone,Amount,Method,Note\n';
+        DB.payments
+          .sort((a,b) => new Date(b.date) - new Date(a.date))
+          .forEach(p => {
+            const c = DB.customers.find(x => x.id === p.cid);
+            csv += '"'+p.date+'","'+(c?.name||'')+'","'+(c?.phone||'')+'",'+
+                   p.amount+',"'+(p.method||'')+'","'+(p.note||'')+'"\n';
+          });
+        fn = 'UBE-payments-' + UTIL.today() + '.csv';
+
+      } else if (type === 'all') {
+        // Full database as single multi-sheet CSV backup
+        this.backup();
+        return;
+      }
+
+      if (csv) {
+        UTIL.download(csv, fn, 'text/csv');
+        TOAST.show(fn + ' exported', 'info');
+      }
+    } catch(e) {
+      TOAST.show('Export failed', 'err');
+      console.error('[EXPORT]', e);
     }
-    if (csv) { UTIL.download(csv, fn, 'text/csv'); TOAST.show(`${fn} exported`, 'info'); }
+  },
+
+  // ── CSV IMPORT ─────────────────────────────────────────────
+  // Supports: customers, products, sales, payments
+  // Merges safely — does NOT overwrite existing records with same ID
+  importCSV(input, type) {
+    const file = input.files[0];
+    if (!file) return;
+    const r = new FileReader();
+    r.onload = e => {
+      try {
+        const lines = e.target.result.split('\n').map(l => l.trim()).filter(l => l);
+        if (lines.length < 2) { TOAST.show('CSV file is empty or invalid', 'err'); return; }
+
+        const headers = lines[0].split(',').map(h => h.replace(/"/g,'').trim().toLowerCase());
+        const rows = lines.slice(1).map(line => {
+          // Handle quoted CSV values
+          const vals = [];
+          let inQ = false, cur = '';
+          for (const ch of line) {
+            if (ch === '"') { inQ = !inQ; }
+            else if (ch === ',' && !inQ) { vals.push(cur.trim()); cur = ''; }
+            else cur += ch;
+          }
+          vals.push(cur.trim());
+          const obj = {};
+          headers.forEach((h, i) => obj[h] = vals[i] || '');
+          return obj;
+        });
+
+        let added = 0, skipped = 0;
+
+        if (type === 'customers') {
+          rows.forEach(row => {
+            if (!row.name || !row.phone) { skipped++; return; }
+            const exists = DB.customers.find(c =>
+              c.phone === row.phone.replace(/"/g,''));
+            if (exists) { skipped++; return; } // skip duplicates by phone
+            DB.customers.push({
+              id:       DB._cid++,
+              name:     row.name.replace(/"/g,''),
+              phone:    row.phone.replace(/"/g,''),
+              location: (row.location||'').replace(/"/g,''),
+              notes:    (row.notes||'').replace(/"/g,''),
+              created:  row.joined || UTIL.today()
+            });
+            added++;
+          });
+
+        } else if (type === 'products') {
+          rows.forEach(row => {
+            if (!row.name || !row.price) { skipped++; return; }
+            const price = parseFloat(row.price);
+            if (!price || price <= 0) { skipped++; return; }
+            const exists = DB.products.find(p =>
+              p.name.toLowerCase() === row.name.replace(/"/g,'').toLowerCase());
+            if (exists) { skipped++; return; } // skip duplicates by name
+            DB.products.push({
+              id:       DB._pid++,
+              name:     row.name.replace(/"/g,''),
+              category: (row.category||'Other').replace(/"/g,''),
+              size:     (row.size||'').replace(/"/g,''),
+              hsn:      (row.hsn||'').replace(/"/g,''),
+              gst_rate: parseFloat(row['gst%']||row.gst||0) || 0,
+              price:    price,
+              stock:    parseInt(row.stock) || 0,
+              created:  UTIL.today()
+            });
+            added++;
+          });
+        }
+        // Note: sales/payments import is not recommended as they
+        // depend on customer/product IDs. Use JSON restore instead.
+
+        DATABASE.save();
+        DASHBOARD.render();
+        if (type === 'customers') CUSTOMER.render(DB.customers);
+        if (type === 'products')  PRODUCT.render(DB.products);
+        TOAST.show('Imported: ' + added + ' added, ' + skipped + ' skipped', 'ok');
+      } catch(err) {
+        TOAST.show('CSV import failed — check file format', 'err');
+        console.error('[IMPORT]', err);
+      }
+    };
+    r.readAsText(file);
+    input.value = '';
   }
 };
 
@@ -2384,23 +2828,47 @@ document.addEventListener('keydown', e => {
 });
 
 /* ════════════════════════════════
+   AUTO-LOGOUT — 30 min inactivity
+════════════════════════════════ */
+(function() {
+  const TIMEOUT = 30 * 60 * 1000;
+  let _timer;
+  function resetTimer() {
+    clearTimeout(_timer);
+    _timer = setTimeout(() => {
+      if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
+        TOAST.show('Session expired — please sign in again', 'info');
+        setTimeout(() => AUTH.logout(), 1800);
+      }
+    }, TIMEOUT);
+  }
+  ['click','keydown','touchstart','mousemove'].forEach(ev =>
+    document.addEventListener(ev, resetTimer, { passive:true })
+  );
+  resetTimer();
+})();
+
+/* ════════════════════════════════
    BOOT
 ════════════════════════════════ */
-DATABASE.load(); // load DB first (local + start Firebase sync)
+DATABASE.load(); // load DB first — starts localStorage + Firebase sync
 
-  document.documentElement.classList.remove('ube-authed'); // remove anti-flash class
-  // Apply saved theme immediately
+setTimeout(() => {
+  // Remove anti-flash class — JS is now in control of visibility
+  document.documentElement.classList.remove('ube-authed');
+
+  // Apply saved theme
   if (localStorage.getItem('UBE_THEME') === 'light') {
     document.documentElement.classList.add('light');
     const btn = document.getElementById('theme-btn');
     if (btn) btn.textContent = '☀️';
   }
 
-setTimeout(() => {
-  // Pre-fill username field on login screen
-  document.getElementById('l-user').value = DB.settings.username || '';
+  // Pre-fill username on login screen
+  const userEl = document.getElementById('l-user');
+  if (userEl) userEl.value = DB.settings.username || '';
 
-  // Auto-login if session cookie exists
+  // Auto-login if valid session exists
   if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
     document.getElementById('screen-login').style.display = 'none';
     document.getElementById('app').classList.add('show');
