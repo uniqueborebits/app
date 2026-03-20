@@ -1199,6 +1199,31 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
 
 
 
+
+<!-- PASSWORD CONFIRM MODAL -->
+<div class="overlay" id="m-pwd-confirm">
+  <div class="modal" style="max-width:340px">
+    <div class="modal-head">
+      <div class="modal-title" id="m-pwd-title">Confirm Action</div>
+      <button class="modal-close" onclick="PWDMODAL.cancel()">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="m-pwd-desc" style="font-size:13px;color:var(--text-2);margin-bottom:14px"></div>
+      <div class="field">
+        <label>Enter Password</label>
+        <input type="password" id="m-pwd-input" placeholder="••••••••" autocomplete="off">
+      </div>
+      <div id="m-pwd-err" style="font-size:12px;color:var(--red);margin-top:6px;display:none">
+        ✕ Wrong password. Try again.
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="PWDMODAL.cancel()">Cancel</button>
+      <button class="btn btn-danger" id="m-pwd-confirm-btn" onclick="PWDMODAL.confirm()">Confirm</button>
+    </div>
+  </div>
+</div>
+
 <!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
 <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
@@ -1261,7 +1286,8 @@ const DATABASE = (() => {
       username: 'admin',
       password: 'admin123'
     },
-    _cid: 1, _pid: 1, _sid: 1, _inv: 1
+    _cid: 1, _pid: 1, _sid: 1, _inv: 1,
+    _wv:  0   // write version — incremented on every save, used to detect own-write echoes
   };
 
   // ── SYNC STATUS ──────────────────────────────────────────────
@@ -1275,25 +1301,31 @@ const DATABASE = (() => {
   }
 
   // ── SAVE ─────────────────────────────────────────────────────
-  // Always saves to localStorage first (instant), then Firebase
-  // Never overwrites Firebase with empty/partial data
+  // Saves to localStorage instantly, then pushes full state to Firebase.
+  // Uses set() (full overwrite) so deletions are correctly reflected.
   function save() {
-    // Guard: never save empty DB to Firebase
+    // Guard: never push empty DB to Firebase
     const isEmpty = !DB.customers.length && !DB.products.length &&
                     !DB.sales.length && !DB.payments.length;
 
-    // 1. Always save to localStorage
+    // 1. Always save to localStorage first
     try {
       localStorage.setItem(KEY, JSON.stringify(DB));
     } catch (e) {
       console.error('[DB] localStorage save failed:', e);
     }
 
-    // 2. Save to Firebase (skip if DB is empty — prevents overwrite)
+    // 2. Push full state to Firebase (set = full overwrite, handles deletes correctly)
     if (typeof db !== 'undefined' && !isEmpty) {
       setSync('syncing', 'Saving…');
-      db.ref(APP_CONFIG.FB_PATH).update(DB)
-        .then(() => setSync('synced', 'Synced'))
+      // Increment write version so listener can identify our own echo
+      DB._wv = (DB._wv || 0) + 1;
+      localStorage.setItem(KEY, JSON.stringify(DB)); // update localStorage with new _wv
+      db.ref(APP_CONFIG.FB_PATH).set(DB)
+        .then(() => {
+          setSync('synced', 'Synced');
+          // Resume listener after a short delay (let Firebase settle)
+        })
         .catch(e => {
           console.error('[DB] Firebase save failed:', e);
           setSync('unsynced', 'Not synced');
@@ -1302,23 +1334,35 @@ const DATABASE = (() => {
     }
   }
 
+  // Flag to pause sync listener while we're writing our own changes
+
   // ── MERGE ────────────────────────────────────────────────────
-  // Safely merge cloud data into DB, taking whichever has more data
+  // Accept cloud data ONLY if cloud._wv > local _wv (cloud is genuinely newer).
+  // This prevents our own write echo from overwriting a just-completed delete.
   function mergeCloud(cloud) {
-    if (!cloud) return;
+    if (!cloud) return false;
 
-    // Use cloud arrays if they have MORE data (prevents data loss)
-    if ((cloud.customers||[]).length >= DB.customers.length) DB.customers = cloud.customers || [];
-    if ((cloud.products||[]).length  >= DB.products.length)  DB.products  = cloud.products  || [];
-    if ((cloud.sales||[]).length     >= DB.sales.length)     DB.sales     = cloud.sales     || [];
-    if ((cloud.payments||[]).length  >= DB.payments.length)  DB.payments  = cloud.payments  || [];
+    const cloudWv = cloud._wv || 0;
+    const localWv = DB._wv   || 0;
 
+    // Cloud is older or equal to our last write — ignore (could be our own echo)
+    if (cloudWv <= localWv) {
+      console.log('[DB] Ignoring cloud echo — cloudWv=' + cloudWv + ' localWv=' + localWv);
+      return false;
+    }
+
+    // Cloud is genuinely newer — accept all fields
+    DB.customers = cloud.customers || [];
+    DB.products  = cloud.products  || [];
+    DB.sales     = cloud.sales     || [];
+    DB.payments  = cloud.payments  || [];
     Object.assign(DB.settings, cloud.settings || {});
-    // Take the higher counter values to prevent ID collisions
-    DB._cid = Math.max(DB._cid, cloud._cid || 1);
-    DB._pid = Math.max(DB._pid, cloud._pid || 1);
-    DB._sid = Math.max(DB._sid, cloud._sid || 1);
-    DB._inv = Math.max(DB._inv, cloud._inv || 1);
+    DB._cid = cloud._cid || 1;
+    DB._pid = cloud._pid || 1;
+    DB._sid = cloud._sid || 1;
+    DB._inv = cloud._inv || 1;
+    DB._wv  = cloudWv;
+    return true;
   }
 
   // ── LOAD ─────────────────────────────────────────────────────
@@ -1356,7 +1400,7 @@ const DATABASE = (() => {
       // Live sync listener — on() fires on connect + every change
       db.ref(APP_CONFIG.FB_PATH).on('value', snapshot => {
         try {
-          const cloud = snapshot.val();
+            const cloud = snapshot.val();
 
           // Guard: ignore empty/null cloud data
           if (!cloud || typeof cloud !== 'object') {
@@ -1377,9 +1421,13 @@ const DATABASE = (() => {
             return;
           }
 
-          mergeCloud(cloud);
+          const accepted = mergeCloud(cloud);
+          if (!accepted) {
+            setSync('synced', 'Synced');
+            return; // our own echo — ignore
+          }
 
-          // Mirror merged result back to localStorage
+          // Cloud was genuinely newer — mirror to localStorage
           localStorage.setItem(KEY, JSON.stringify(DB));
           setSync('synced', 'Synced');
           console.log('[DB] Cloud sync OK — customers:', DB.customers.length, 'sales:', DB.sales.length);
@@ -1771,12 +1819,15 @@ const CUSTOMER = {
     const c = DB.customers.find(x => x.id === id);
     if (!c) return;
     if (!confirm('Delete customer "' + c.name + '"? Their sales history will remain.')) return;
-    if (!UTIL.askPassword('delete customer')) return;
-    DB.customers = DB.customers.filter(x => x.id !== id);
-    DATABASE.save();
-    this.render(DB.customers);
-    DASHBOARD.render();
-    TOAST.show('Customer deleted', 'info');
+    PWDMODAL.ask('Delete Customer', 'Enter password to delete "' + c.name + '"').then(ok => {
+      if (!ok) return;
+      DB.customers = DB.customers.filter(x => x.id !== id);
+      DATABASE.save();
+      CUSTOMER.render(DB.customers);
+      DASHBOARD.render();
+      UI.updatePayBadge();
+      TOAST.show('Customer deleted', 'info');
+    });
   },
 
   filter(q) {
@@ -1876,11 +1927,13 @@ const PRODUCT = {
     const p = DB.products.find(x => x.id === id);
     if (!p) return;
     if (!confirm('Delete product "' + p.name + '"? This cannot be undone.')) return;
-    if (!UTIL.askPassword('delete product')) return;
-    DB.products = DB.products.filter(x => x.id !== id);
-    DATABASE.save();
-    this.render(DB.products);
-    TOAST.show('Product deleted', 'info');
+    PWDMODAL.ask('Delete Product', 'Enter password to delete "' + p.name + '"').then(ok => {
+      if (!ok) return;
+      DB.products = DB.products.filter(x => x.id !== id);
+      DATABASE.save();
+      PRODUCT.render(DB.products);
+      TOAST.show('Product deleted', 'info');
+    });
   },
 
   openStock(id) {
@@ -2623,11 +2676,13 @@ const SETTINGS = {
 
   reset() {
     if (!confirm('Permanently delete ALL data? This cannot be undone.')) return;
-    if (!UTIL.askPassword('reset ALL data')) return;
-    DATABASE.reset();
-    TOAST.show('All data cleared', 'info');
-    DASHBOARD.render();
-    UI.updatePayBadge();
+    PWDMODAL.ask('Reset All Data', 'This will permanently delete everything. Enter password to confirm.').then(ok => {
+      if (!ok) return;
+      DATABASE.reset();
+      TOAST.show('All data cleared', 'info');
+      DASHBOARD.render();
+      UI.updatePayBadge();
+    });
   }
 };
 
@@ -2657,12 +2712,14 @@ const EXPORT = {
           TOAST.show('Invalid backup file — missing required data', 'err'); return;
         }
         if (!confirm('Replace ALL current data with this backup? This cannot be undone.')) return;
-        if (!UTIL.askPassword('restore backup')) return;
-        Object.assign(DB, d);
-        DATABASE.save();
-        DASHBOARD.render();
-        UI.updatePayBadge();
-        TOAST.show('Data restored from backup ✓', 'ok');
+        PWDMODAL.ask('Restore Backup', 'Enter password to replace all current data with backup.').then(ok => {
+          if (!ok) return;
+          Object.assign(DB, d);
+          DATABASE.save();
+          DASHBOARD.render();
+          UI.updatePayBadge();
+          TOAST.show('Data restored from backup ✓', 'ok');
+        });
       } catch(err) {
         TOAST.show('Failed to read backup file', 'err');
         console.error('[RESTORE]', err);
@@ -2815,6 +2872,52 @@ const EXPORT = {
     input.value = '';
   }
 };
+
+/* ════════════════════════════════
+   PASSWORD CONFIRM MODAL
+════════════════════════════════ */
+const PWDMODAL = {
+  _resolve: null,
+
+  // Returns a Promise<boolean> — true if password correct, false if cancelled
+  ask(title, desc) {
+    return new Promise(resolve => {
+      this._resolve = resolve;
+      document.getElementById('m-pwd-title').textContent = title || 'Confirm Action';
+      document.getElementById('m-pwd-desc').textContent  = desc  || 'Enter your password to continue.';
+      document.getElementById('m-pwd-input').value = '';
+      document.getElementById('m-pwd-err').style.display = 'none';
+      UI.openModal('m-pwd-confirm');
+      setTimeout(() => document.getElementById('m-pwd-input').focus(), 120);
+    });
+  },
+
+  confirm() {
+    const pwd = document.getElementById('m-pwd-input').value;
+    if (pwd !== DB.settings.password) {
+      document.getElementById('m-pwd-err').style.display = 'block';
+      document.getElementById('m-pwd-input').value = '';
+      document.getElementById('m-pwd-input').focus();
+      return;
+    }
+    UI.closeModal('m-pwd-confirm');
+    if (this._resolve) { this._resolve(true); this._resolve = null; }
+  },
+
+  cancel() {
+    UI.closeModal('m-pwd-confirm');
+    document.getElementById('m-pwd-input').value = '';
+    document.getElementById('m-pwd-err').style.display = 'none';
+    if (this._resolve) { this._resolve(false); this._resolve = null; }
+  }
+};
+
+// Allow Enter key to confirm password modal
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && document.getElementById('m-pwd-confirm')?.classList.contains('open')) {
+    PWDMODAL.confirm();
+  }
+});
 
 /* ════════════════════════════════
    GLOBAL EVENTS
