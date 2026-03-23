@@ -1089,10 +1089,11 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
 <div class="overlay" id="m-sale">
   <div class="modal">
     <div class="modal-head">
-      <div class="modal-title">New Sale</div>
+      <div class="modal-title" id="m-sale-ttl">New Sale</div>
       <button class="modal-close" onclick="UI.closeModal('m-sale')">×</button>
     </div>
     <div class="modal-body">
+      <input type="hidden" id="s-eid">
       <div class="stock-warn" id="sale-stock-warn">⚠ Not enough stock available</div>
       <div class="frow">
         <div class="field"><label>Date *</label><input type="date" id="s-date"></div>
@@ -1138,7 +1139,7 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="UI.closeModal('m-sale')">Cancel</button>
-      <button class="btn btn-gold" onclick="SALE.save()">Save Sale</button>
+      <button class="btn btn-gold" id="s-save-btn" onclick="SALE.save()">Save Sale</button>
     </div>
   </div>
 </div>
@@ -1190,6 +1191,7 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
     <div class="modal-body" id="invoice-body"></div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="UI.closeModal('m-invoice')">Close</button>
+      <button class="btn btn-ghost" id="inv-edit-btn" onclick="INVOICE.editSale()">✏ Edit Sale</button>
       <button class="btn btn-gold" onclick="INVOICE.print()">🖨 Print / PDF</button>
     </div>
   </div>
@@ -1273,26 +1275,18 @@ const DATABASE = (() => {
   const KEY = APP_CONFIG.DB_KEY;
 
   const DB = {
-    customers: [],
-    products:  [],
-    sales:     [],
-    payments:  [],
+    customers: [], products: [], sales: [], payments: [],
     settings: {
-      name:     APP_CONFIG.APP_NAME,
-      phone:    '',
-      email:    '',
-      gst:      '',
-      address:  '',
-      username: 'admin',
-      password: 'admin123'
+      name: APP_CONFIG.APP_NAME, phone: '', email: '',
+      gst: '', address: '', username: 'admin', password: 'admin123'
     },
-    _cid: 1, _pid: 1, _sid: 1, _inv: 1,
-    _wv:  0   // write version — incremented on every save, used to detect own-write echoes
+    _cid:1, _pid:1, _sid:1, _inv:1,
+    _ts: 0   // last-write timestamp — whichever device has the highest _ts wins
   };
 
-  // ── SYNC STATUS ──────────────────────────────────────────────
+  let isSyncing = false; // prevents Firebase listener from overwriting our own writes
+
   function setSync(state, msg) {
-    // state: 'synced' | 'unsynced' | 'syncing'
     const ind = document.getElementById('sync-indicator');
     const txt = document.getElementById('sync-txt');
     if (!ind || !txt) return;
@@ -1300,149 +1294,112 @@ const DATABASE = (() => {
     txt.textContent = msg;
   }
 
-  // ── SAVE ─────────────────────────────────────────────────────
-  // Saves to localStorage instantly, then pushes full state to Firebase.
-  // Uses set() (full overwrite) so deletions are correctly reflected.
+  // ── SAVE ──────────────────────────────────────────────────────
+  // 1. Stamp with current timestamp
+  // 2. Save to localStorage immediately
+  // 3. Set isSyncing = true so listener ignores the echo
+  // 4. Push to Firebase using update() (not set())
+  // 5. Reset isSyncing after confirmed
   function save() {
-    // Guard: never push empty DB to Firebase
-    const isEmpty = !DB.customers.length && !DB.products.length &&
-                    !DB.sales.length && !DB.payments.length;
+    DB._ts = Date.now(); // stamp every write with current time
 
-    // 1. Always save to localStorage first
-    try {
-      localStorage.setItem(KEY, JSON.stringify(DB));
-    } catch (e) {
-      console.error('[DB] localStorage save failed:', e);
-    }
+    // 1. localStorage — instant, always
+    try { localStorage.setItem(KEY, JSON.stringify(DB)); }
+    catch(e) { console.error('[DB] localStorage failed:', e); }
 
-    // 2. Push full state to Firebase (set = full overwrite, handles deletes correctly)
-    if (typeof db !== 'undefined' && !isEmpty) {
+    // 2. Firebase
+    if (typeof db !== 'undefined') {
+      isSyncing = true;
       setSync('syncing', 'Saving…');
-      // Increment write version so listener can identify our own echo
-      DB._wv = (DB._wv || 0) + 1;
-      localStorage.setItem(KEY, JSON.stringify(DB)); // update localStorage with new _wv
-      db.ref(APP_CONFIG.FB_PATH).set(DB)
-        .then(() => {
+      db.ref(APP_CONFIG.FB_PATH).update(DB)
+        .then(function() {
           setSync('synced', 'Synced');
-          // Resume listener after a short delay (let Firebase settle)
+          // Keep isSyncing true for 2s to absorb any delayed echo
+          setTimeout(function() { isSyncing = false; }, 2000);
         })
-        .catch(e => {
-          console.error('[DB] Firebase save failed:', e);
+        .catch(function(e) {
+          isSyncing = false;
+          console.error('[DB] Firebase update failed:', e);
           setSync('unsynced', 'Not synced');
-          TOAST.show('Cloud save failed — data saved locally', 'info');
+          TOAST.show('Cloud save failed — saved locally', 'info');
         });
     }
   }
 
-  // Flag to pause sync listener while we're writing our own changes
-
-  // ── MERGE ────────────────────────────────────────────────────
-  // Accept cloud data ONLY if cloud._wv > local _wv (cloud is genuinely newer).
-  // This prevents our own write echo from overwriting a just-completed delete.
-  function mergeCloud(cloud) {
-    if (!cloud) return false;
-
-    const cloudWv = cloud._wv || 0;
-    const localWv = DB._wv   || 0;
-
-    // Cloud is older or equal to our last write — ignore (could be our own echo)
-    if (cloudWv <= localWv) {
-      console.log('[DB] Ignoring cloud echo — cloudWv=' + cloudWv + ' localWv=' + localWv);
-      return false;
-    }
-
-    // Cloud is genuinely newer — accept all fields
-    DB.customers = cloud.customers || [];
-    DB.products  = cloud.products  || [];
-    DB.sales     = cloud.sales     || [];
-    DB.payments  = cloud.payments  || [];
-    Object.assign(DB.settings, cloud.settings || {});
-    DB._cid = cloud._cid || 1;
-    DB._pid = cloud._pid || 1;
-    DB._sid = cloud._sid || 1;
-    DB._inv = cloud._inv || 1;
-    DB._wv  = cloudWv;
-    return true;
-  }
-
-  // ── LOAD ─────────────────────────────────────────────────────
+  // ── LOAD ──────────────────────────────────────────────────────
   function load() {
-    // 1. localStorage — instant, works offline
+    // 1. localStorage first
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {
-        const parsed = JSON.parse(raw);
-        DB.customers = parsed.customers || [];
-        DB.products  = parsed.products  || [];
-        DB.sales     = parsed.sales     || [];
-        DB.payments  = parsed.payments  || [];
-        Object.assign(DB.settings, parsed.settings || {});
-        DB._cid = parsed._cid || 1;
-        DB._pid = parsed._pid || 1;
-        DB._sid = parsed._sid || 1;
-        DB._inv = parsed._inv || 1;
+        const p = JSON.parse(raw);
+        DB.customers = p.customers || []; DB.products = p.products || [];
+        DB.sales     = p.sales     || []; DB.payments = p.payments || [];
+        Object.assign(DB.settings, p.settings || {});
+        DB._cid = p._cid||1; DB._pid = p._pid||1;
+        DB._sid = p._sid||1; DB._inv = p._inv||1;
+        DB._ts  = p._ts  ||0;
       }
-    } catch (e) {
-      console.error('[DB] localStorage load failed:', e);
-    }
+    } catch(e) { console.error('[DB] localStorage load failed:', e); }
 
-    // 2. Firebase realtime sync — cloud is authoritative
     if (typeof db !== 'undefined') {
-      // Monitor connection state
-      db.ref('.info/connected').on('value', snap => {
-        if (snap.val() === true) {
-          setSync('synced', 'Synced');
-        } else {
-          setSync('unsynced', 'Offline');
-        }
+      // Connection indicator
+      db.ref('.info/connected').on('value', function(snap) {
+        setSync(snap.val() ? 'synced' : 'unsynced', snap.val() ? 'Synced' : 'Offline');
       });
 
-      // Live sync listener — on() fires on connect + every change
-      db.ref(APP_CONFIG.FB_PATH).on('value', snapshot => {
+      // Live listener — only accepts cloud data if cloud._ts > local DB._ts
+      // This means: whoever wrote LAST wins. Deletions always win because
+      // save() stamps a fresh timestamp before pushing.
+      db.ref(APP_CONFIG.FB_PATH).on('value', function(snapshot) {
         try {
-            const cloud = snapshot.val();
+          // isSyncing = we just wrote this — ignore our own echo
+          if (isSyncing) {
+            console.log('[DB] isSyncing — ignoring own echo');
+            return;
+          }
 
-          // Guard: ignore empty/null cloud data
+          var cloud = snapshot.val();
           if (!cloud || typeof cloud !== 'object') {
-            console.log('[DB] Cloud empty — keeping local data');
             setSync('synced', 'Synced');
             return;
           }
 
-          // Guard: ignore cloud if it has NO records at all
-          const cloudHasData = (cloud.customers||[]).length > 0 ||
-                               (cloud.products||[]).length  > 0 ||
-                               (cloud.sales||[]).length     > 0;
-          if (!cloudHasData) {
-            console.log('[DB] Cloud has no records — keeping local data');
-            // Push local to cloud if we have data
-            const localHasData = DB.customers.length || DB.products.length || DB.sales.length;
-            if (localHasData) save();
+          var cloudTs = cloud._ts || 0;
+          var localTs = DB._ts   || 0;
+
+          // Cloud is older than our last write — ignore it
+          // This is the KEY check: after delete, local _ts > cloud _ts
+          // so deleted data cannot come back
+          if (cloudTs <= localTs) {
+            console.log('[DB] Cloud older (cloudTs=' + cloudTs + ' localTs=' + localTs + ') — ignored');
+            setSync('synced', 'Synced');
             return;
           }
 
-          const accepted = mergeCloud(cloud);
-          if (!accepted) {
-            setSync('synced', 'Synced');
-            return; // our own echo — ignore
-          }
+          // Cloud is genuinely newer (another device made a change) — accept it
+          DB.customers = cloud.customers || [];
+          DB.products  = cloud.products  || [];
+          DB.sales     = cloud.sales     || [];
+          DB.payments  = cloud.payments  || [];
+          Object.assign(DB.settings, cloud.settings || {});
+          DB._cid = cloud._cid||1; DB._pid = cloud._pid||1;
+          DB._sid = cloud._sid||1; DB._inv = cloud._inv||1;
+          DB._ts  = cloudTs;
 
-          // Cloud was genuinely newer — mirror to localStorage
           localStorage.setItem(KEY, JSON.stringify(DB));
           setSync('synced', 'Synced');
-          console.log('[DB] Cloud sync OK — customers:', DB.customers.length, 'sales:', DB.sales.length);
+          console.log('[DB] Cloud accepted — ts:', cloudTs, 'customers:', DB.customers.length);
 
-          // Re-render current view
           try {
             if (typeof DASHBOARD !== 'undefined') DASHBOARD.render();
             if (typeof CUSTOMER  !== 'undefined') CUSTOMER.render(DB.customers);
             if (typeof PRODUCT   !== 'undefined') PRODUCT.render(DB.products);
             if (typeof SALE      !== 'undefined') SALE.render(DB.sales);
             if (typeof PAYMENT   !== 'undefined') PAYMENT.render();
-          } catch(renderErr) {
-            console.error('[DB] Re-render failed:', renderErr);
-          }
-        } catch (e) {
+          } catch(re) { console.error('[DB] render error:', re); }
+
+        } catch(e) {
           console.error('[DB] Sync error:', e);
           setSync('unsynced', 'Sync error');
         }
@@ -1452,28 +1409,52 @@ const DATABASE = (() => {
     }
   }
 
-  // ── SYNC NOW ─────────────────────────────────────────────────
-  // Manual force-push to Firebase
-  function syncNow() {
-    const btn = document.getElementById('sync-btn');
-    if (btn) { btn.textContent = '↑ Syncing…'; btn.disabled = true; }
-    setSync('syncing', 'Syncing…');
+  // ── RESET ─────────────────────────────────────────────────────
+  function reset() {
+    DB.customers = []; DB.products = []; DB.sales = []; DB.payments = [];
+    DB._cid = 1; DB._pid = 1; DB._sid = 1; DB._inv = 1;
+    DB._ts  = Date.now(); // stamp NOW so cloud echo (with old _ts) is rejected
 
     try {
+      localStorage.removeItem(KEY);
       localStorage.setItem(KEY, JSON.stringify(DB));
-    } catch(e) { console.error('[DB] localStorage syncNow failed:', e); }
+    } catch(e) {}
 
     if (typeof db !== 'undefined') {
-      db.ref(APP_CONFIG.FB_PATH).set(DB)
-        .then(() => {
-          setSync('synced', 'Synced');
-          TOAST.show('✓ Synced to cloud successfully', 'ok');
-          if (btn) { btn.textContent = '↑ Sync'; btn.disabled = false; }
+      isSyncing = true;
+      setSync('syncing', 'Clearing…');
+      db.ref(APP_CONFIG.FB_PATH).update(DB)
+        .then(function() {
+          setSync('synced', 'Cleared');
+          setTimeout(function() { isSyncing = false; }, 3000);
         })
-        .catch(e => {
-          console.error('[DB] syncNow failed:', e);
+        .catch(function(e) {
+          isSyncing = false;
+          console.error('[DB] Firebase reset failed:', e);
+        });
+    }
+  }
+
+  // ── SYNC NOW ──────────────────────────────────────────────────
+  function syncNow() {
+    var btn = document.getElementById('sync-btn');
+    if (btn) { btn.textContent = '↑ Syncing…'; btn.disabled = true; }
+    setSync('syncing', 'Syncing…');
+    DB._ts = Date.now();
+    try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch(e) {}
+    if (typeof db !== 'undefined') {
+      isSyncing = true;
+      db.ref(APP_CONFIG.FB_PATH).update(DB)
+        .then(function() {
+          setSync('synced', 'Synced');
+          TOAST.show('✓ Synced to cloud', 'ok');
+          if (btn) { btn.textContent = '↑ Sync'; btn.disabled = false; }
+          setTimeout(function() { isSyncing = false; }, 2000);
+        })
+        .catch(function(e) {
+          isSyncing = false;
           setSync('unsynced', 'Not synced');
-          TOAST.show('Cloud sync failed — check connection', 'err');
+          TOAST.show('Sync failed — check connection', 'err');
           if (btn) { btn.textContent = '↑ Sync'; btn.disabled = false; }
         });
     } else {
@@ -1482,19 +1463,14 @@ const DATABASE = (() => {
     }
   }
 
-  // ── RESET ────────────────────────────────────────────────────
-  function reset() {
-    DB.customers = []; DB.products = []; DB.sales = []; DB.payments = [];
-    DB._cid = 1; DB._pid = 1; DB._sid = 1; DB._inv = 1;
-    save();
-  }
-
   return { DB, save, load, reset, syncNow, setSync };
+
 })();
+
 
 const { DB } = DATABASE;
 
-// Auto-save every 5 seconds (belt + suspenders)
+// Auto-save every 5 seconds
 setInterval(() => DATABASE.save(), 5000);
 
 // Save on page hide/close
@@ -1515,7 +1491,7 @@ const UTIL = {
   invNum() {
     const n = DB._inv++;
     DATABASE.save();
-    return APP_CONFIG.INV_PREFIX + '-' + String(n).padStart(3, '0');
+    return APP_CONFIG.INV_PREFIX + '-' + String(n).padStart(3, '0'); // UBE-001, UBE-002...
   },
   custTotal(cid)   { return DB.sales.filter(s => s.cid === cid).reduce((a, s) => a + (s.total   || 0), 0); },
   custPending(cid) { return DB.sales.filter(s => s.cid === cid).reduce((a, s) => a + (s.pending || 0), 0); },
@@ -1746,11 +1722,12 @@ const DASHBOARD = {
     const rows = [...DB.sales].reverse().slice(0, 8).map(s => {
       const c = DB.customers.find(x => x.id === s.cid);
       const p = DB.products.find(x => x.id === s.pid);
-      // FIX: removed erroneous Number() wrapper around CSS string
+      const cName = c?.name || s.cname || '?';
+      const pName = p?.name || s.pname || '?';
       return `<div style="display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)">
         <div style="width:7px;height:7px;border-radius:50%;background:${s.pending > 0 ? 'var(--gold)' : 'var(--green)'};flex-shrink:0"></div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${UTIL.esc(c?.name||'?')} — ${UTIL.esc(p?.name||'?')}</div>
+          <div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${UTIL.esc(cName)} — ${UTIL.esc(pName)}</div>
           <div style="font-size:11.5px;color:var(--text-2);margin-top:2px">${UTIL.fmtDate(s.date)} · ${s.inv}</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
@@ -2003,23 +1980,40 @@ const PRODUCT = {
    SALE MODULE
 ════════════════════════════════ */
 const SALE = {
-  openForm() {
+  openForm(editId) {
+    const s = editId ? DB.sales.find(x => x.id === editId) : null;
+
+    // Populate customer dropdown
     const sc = document.getElementById('s-cust');
     sc.innerHTML = '<option value="">Select customer…</option>' +
       DB.customers.map(c => `<option value="${c.id}">${UTIL.esc(c.name)} · ${UTIL.esc(c.phone)}</option>`).join('');
 
+    // Populate product dropdown
     const sp = document.getElementById('s-prod');
     sp.innerHTML = '<option value="">Select product…</option>' +
       DB.products.map(p => `<option value="${p.id}">${UTIL.esc(p.name)} — ${UTIL.money(p.price)} [${p.stock} left]</option>`).join('');
 
-    document.getElementById('s-date').value  = UTIL.today();
-    document.getElementById('s-qty').value   = '1';
-    document.getElementById('s-price').value = '';
-    document.getElementById('s-paid').value  = '0';
-    document.getElementById('s-notes').value = '';
-    document.getElementById('s-total').textContent   = '0.00';
-    document.getElementById('s-pending').textContent = '0.00';
+    // Fill fields
+    document.getElementById('s-eid').value   = s ? s.id : '';
+    document.getElementById('s-date').value  = s ? s.date  : UTIL.today();
+    document.getElementById('s-qty').value   = s ? s.qty   : '1';
+    document.getElementById('s-price').value = s ? s.price : '';
+    document.getElementById('s-paid').value  = s ? s.paid  : '0';
+    document.getElementById('s-notes').value = s ? (s.notes||'') : '';
+    document.getElementById('s-total').textContent   = s ? s.total.toLocaleString('en-IN',{minimumFractionDigits:2}) : '0.00';
+    document.getElementById('s-pending').textContent = s ? s.pending.toLocaleString('en-IN',{minimumFractionDigits:2}) : '0.00';
     document.getElementById('sale-stock-warn').classList.remove('show');
+
+    // Set customer and product selects to current values when editing
+    if (s) {
+      document.getElementById('s-cust').value = s.cid;
+      document.getElementById('s-prod').value = s.pid;
+    }
+
+    // Update title and button
+    document.getElementById('m-sale-ttl').textContent  = s ? 'Edit Sale' : 'New Sale';
+    document.getElementById('s-save-btn').textContent  = s ? 'Update Sale' : 'Save Sale';
+
     UI.openModal('m-sale');
     setTimeout(() => document.getElementById('s-cust').focus(), 100);
   },
@@ -2075,21 +2069,59 @@ const SALE = {
 
     const total   = qty * price;
     const pending = Math.max(0, total - paid);
-    const inv     = UTIL.invNum();
-    if (prod) prod.stock -= qty;
+    const method  = document.getElementById('s-method').value;
+    const notes   = document.getElementById('s-notes').value.trim();
+    const eid     = document.getElementById('s-eid').value;
 
-    DB.sales.push({
-      id: DB._sid++, inv, date: sdate, cid, pid, qty, price, total, paid, pending,
-      method: document.getElementById('s-method').value,
-      notes:  document.getElementById('s-notes').value.trim()
-    });
+    if (eid) {
+      // ── EDIT MODE — password required ─────────────────────
+      PWDMODAL.ask('Edit Sale', 'Enter password to save changes to this sale.').then(ok => {
+        if (!ok) return;
+        const existing = DB.sales.find(x => x.id === parseInt(eid));
+        if (existing) {
+          // Restore stock from old qty, apply new qty
+          const oldProd = DB.products.find(x => x.id === existing.pid);
+          if (oldProd) oldProd.stock += existing.qty; // restore old stock
+          if (prod)    prod.stock    -= qty;           // deduct new qty
 
-    DATABASE.save();
-    UI.closeModal('m-sale');
-    this.render(DB.sales);
-    DASHBOARD.render();
-    UI.updatePayBadge();
-    TOAST.show(`Sale ${inv} saved!`);
+          existing.date    = sdate;
+          existing.cid     = cid;
+          existing.pid     = pid;
+          existing.qty     = qty;
+          existing.price   = price;
+          existing.total   = total;
+          existing.paid    = paid;
+          existing.pending = pending;
+          existing.method  = method;
+          existing.notes   = notes;
+        }
+        DATABASE.save();
+        UI.closeModal('m-sale');
+        SALE.render(DB.sales);
+        DASHBOARD.render();
+        UI.updatePayBadge();
+        TOAST.show('Sale updated successfully', 'ok');
+      });
+    } else {
+      // ── NEW SALE ───────────────────────────────────────────
+      const inv = UTIL.invNum();
+      if (prod) prod.stock -= qty;
+      // Store name snapshots so deleted customers/products still show in history
+      const custName = DB.customers.find(x => x.id === cid)?.name || '';
+      const prodName = DB.products.find(x => x.id === pid)?.name  || '';
+      DB.sales.push({
+        id: DB._sid++, inv, date: sdate, cid, pid, qty, price, total, paid, pending,
+        method, notes,
+        cname: custName,  // snapshot: shows even if customer is deleted
+        pname: prodName   // snapshot: shows even if product is deleted
+      });
+      DATABASE.save();
+      UI.closeModal('m-sale');
+      this.render(DB.sales);
+      DASHBOARD.render();
+      UI.updatePayBadge();
+      TOAST.show(`Sale ${inv} saved!`);
+    }
   },
 
   filter(q) {
@@ -2108,16 +2140,19 @@ const SALE = {
       wrap.innerHTML = UI.empty('📋', 'No sales recorded', 'Record your first sale to get started.', '+ New Sale', 'SALE.openForm()');
       return;
     }
-    const sorted = [...list].sort((a, b) => new Date(b.date) - new Date(a.date));
+    const sorted = [...list].sort((a, b) => a.id - b.id); // oldest first: UBE-001 at top
     const mCol = { Cash: 'bg-green', UPI: 'bg-blue', 'Bank Transfer': 'bg-blue', Cheque: 'bg-gray', Credit: 'bg-gold' };
     const rows = sorted.map(s => {
       const c = DB.customers.find(x => x.id === s.cid);
       const p = DB.products.find(x => x.id === s.pid);
+      // Use stored name snapshot if customer/product was deleted
+      const cName = c?.name || s.cname || '—';
+      const pName = p?.name || s.pname || '—';
       return `<tr>
         <td class="mono">${UTIL.esc(s.inv)}</td>
         <td class="dim">${UTIL.fmtDate(s.date)}</td>
-        <td><strong>${UTIL.esc(c?.name||'—')}</strong></td>
-        <td class="dim" style="font-size:12.5px">${UTIL.esc(p?.name||'—')}</td>
+        <td><strong>${UTIL.esc(cName)}</strong>${!c ? '<span style="font-size:10px;color:var(--text-3);margin-left:4px">(deleted)</span>' : ''}</td>
+        <td class="dim" style="font-size:12.5px">${UTIL.esc(pName)}</td>
         <td class="mono dim">${s.qty}</td>
         <td class="gold">${UTIL.money(s.total)}</td>
         <td class="${s.pending > 0 ? 'red' : 'green'}">${UTIL.money(s.pending)}</td>
@@ -2137,9 +2172,11 @@ const SALE = {
 ════════════════════════════════ */
 const PAYMENT = {
   _cid: null,
+  _sid: null, // specific sale being paid (null = distribute across all pending)
 
   openForCustomer(cid) {
     this._cid = cid;
+    this._sid = null; // no specific sale — distribute across all pending
     const c       = DB.customers.find(x => x.id === cid);
     const pending = UTIL.custPending(cid);
     document.getElementById('pay-cname').textContent     = c?.name || '—';
@@ -2152,7 +2189,16 @@ const PAYMENT = {
 
   openForSale(sid) {
     const s = DB.sales.find(x => x.id === sid);
-    if (s) this.openForCustomer(s.cid);
+    if (!s) return;
+    this._cid = s.cid;
+    this._sid = sid; // link payment to this specific sale
+    const c = DB.customers.find(x => x.id === s.cid);
+    document.getElementById('pay-cname').textContent     = (c?.name || '—') + ' · ' + s.inv;
+    document.getElementById('pay-pend-disp').textContent = UTIL.money(s.pending);
+    document.getElementById('pay-amt').value  = '';
+    document.getElementById('pay-note').value = '';
+    UI.openModal('m-payment');
+    setTimeout(() => document.getElementById('pay-amt').focus(), 100);
   },
 
   save() {
@@ -2160,36 +2206,53 @@ const PAYMENT = {
     if (amt <= 0) { TOAST.show('Enter a valid amount', 'err'); return; }
     if (!this._cid) return;
 
-    // Guard: cap payment to actual pending total — prevent overpayment
-    const totalPending = UTIL.custPending(this._cid);
-    if (amt > totalPending) {
-      TOAST.show('Amount exceeds pending balance of ' + UTIL.money(totalPending), 'err');
-      // Auto-correct the field to the max pending amount
-      document.getElementById('pay-amt').value = totalPending.toFixed(2);
-      return;
-    }
+    const method = document.getElementById('pay-method').value;
+    const note   = document.getElementById('pay-note').value.trim();
 
-    // Distribute oldest-first
-    let rem = amt;
-    DB.sales
-      .filter(s => s.cid === this._cid && s.pending > 0)
-      .sort((a, b) => new Date(a.date) - new Date(b.date))
-      .forEach(s => {
-        if (rem <= 0) return;
-        const pay = Math.min(rem, s.pending);
-        s.paid    += pay;
-        s.pending -= pay;
-        rem       -= pay;
+    if (this._sid) {
+      // ── SALE-SPECIFIC PAYMENT ────────────────────────────
+      const sale = DB.sales.find(x => x.id === this._sid);
+      if (!sale) { TOAST.show('Sale not found', 'err'); return; }
+      if (amt > sale.pending) {
+        TOAST.show('Amount exceeds pending of ' + UTIL.money(sale.pending), 'err');
+        document.getElementById('pay-amt').value = sale.pending.toFixed(2);
+        return;
+      }
+      sale.paid    += amt;
+      sale.pending  = Math.max(0, sale.total - sale.paid);
+      DB.payments.push({
+        id: Date.now(), cid: this._cid, sid: this._sid,
+        amount: amt, method, note, date: UTIL.today()
       });
-
-    DB.payments.push({
-      id:     Date.now(),
-      cid:    this._cid,
-      amount: amt,
-      method: document.getElementById('pay-method').value,
-      note:   document.getElementById('pay-note').value.trim(),
-      date:   UTIL.today()
-    });
+    } else {
+      // ── DISTRIBUTE ACROSS ALL PENDING SALES ──────────────
+      const totalPending = UTIL.custPending(this._cid);
+      if (amt > totalPending) {
+        TOAST.show('Amount exceeds pending balance of ' + UTIL.money(totalPending), 'err');
+        document.getElementById('pay-amt').value = totalPending.toFixed(2);
+        return;
+      }
+      let rem = amt;
+      const affected = [];
+      DB.sales
+        .filter(s => s.cid === this._cid && s.pending > 0)
+        .sort((a, b) => new Date(a.date) - new Date(b.date))
+        .forEach(s => {
+          if (rem <= 0) return;
+          const pay = Math.min(rem, s.pending);
+          s.paid    += pay;
+          s.pending  = Math.max(0, s.total - s.paid);
+          rem        -= pay;
+          affected.push({ sid: s.id, pay });
+        });
+      // Record one payment entry per affected sale for clean history
+      affected.forEach(a => {
+        DB.payments.push({
+          id: Date.now() + a.sid, cid: this._cid, sid: a.sid,
+          amount: a.pay, method, note, date: UTIL.today()
+        });
+      });
+    }
 
     DATABASE.save();
     UI.closeModal('m-payment');
@@ -2315,16 +2378,18 @@ const LEDGER = {
     let runBal = 0;
     const rows = ss.map(s => {
       const p = DB.products.find(x => x.id === s.pid);
+      const pName = p?.name || s.pname || '—';
       runBal += s.total - s.paid;
       return `<tr>
         <td class="dim">${UTIL.fmtDate(s.date)}</td>
         <td class="mono">${UTIL.esc(s.inv)}</td>
-        <td style="font-size:13px">${UTIL.esc(p?.name||'—')}</td>
+        <td style="font-size:13px">${UTIL.esc(pName)}</td>
         <td class="mono dim">${s.qty}</td>
         <td class="gold">${UTIL.money(s.total)}</td>
         <td class="green">${UTIL.money(s.paid)}</td>
         <td class="${runBal > 0 ? 'red' : 'green'}">${UTIL.money(runBal)}</td>
         <td class="acts"><div class="flex-g">
+          <button class="btn btn-ghost btn-xs" onclick="LEDGER.openSaleTimeline(${s.id})">Timeline</button>
           <button class="btn btn-ghost btn-xs" onclick="INVOICE.open(${s.id})">Invoice</button>
           ${s.pending > 0 ? `<button class="btn btn-gold btn-xs" onclick="PAYMENT.openForSale(${s.id})">Pay</button>` : '<span style="font-size:11px;color:var(--green-l)">✓ Paid</span>'}
         </div></td>
@@ -2338,95 +2403,141 @@ const LEDGER = {
 
   renderPaymentsTab(cid) {
     const el = document.getElementById('ledger-tbl');
-    const methodIcons = { Cash:'💵', UPI:'📱', 'Bank Transfer':'🏦', Cheque:'📄', default:'💳' };
+    const mi = { Cash:'💵', UPI:'📱', 'Bank Transfer':'🏦', Cheque:'📄', default:'💳' };
 
-    // Build unified timeline: initial payment at time of sale + subsequent payments
-    const timeline = [];
+    // Build unified list:
+    // 1. Initial payments made at time of purchase (sale.paid > 0)
+    // 2. All subsequent payments from DB.payments
+    const entries = [];
 
-    // 1. Add initial paid amounts from each sale (the amount paid at time of purchase)
+    // --- Initial payments at purchase ---
     DB.sales
       .filter(s => s.cid === cid && s.paid > 0)
       .forEach(s => {
-        const prod = DB.products.find(x => x.id === s.pid);
-        timeline.push({
-          date:   s.date,
-          id:     s.id,        // use sale id as order tiebreaker
-          amount: s.paid,
-          method: s.method,
-          note:   'At purchase — ' + (prod?.name || s.inv),
-          type:   'sale',
-          inv:    s.inv
+        entries.push({
+          id:      s.id,           // sale id as sort key
+          date:    s.date,
+          amount:  s.paid,
+          method:  s.method,
+          note:    'Received at purchase',
+          inv:     s.inv,
+          initial: true
         });
       });
 
-    // 2. Add all subsequent payments recorded via Payments page
+    // --- Subsequent payments ---
     DB.payments
       .filter(p => p.cid === cid)
       .forEach(p => {
-        timeline.push({
-          date:   p.date,
-          id:     p.id,        // id=Date.now() at time of recording
-          amount: p.amount,
-          method: p.method,
-          note:   p.note || '',
-          type:   'payment'
+        const ls = p.sid ? DB.sales.find(x => x.id === p.sid) : null;
+        entries.push({
+          id:      p.id,           // Date.now() as sort key
+          date:    p.date,
+          amount:  p.amount,
+          method:  p.method,
+          note:    p.note || '',
+          inv:     ls ? ls.inv : '',
+          initial: false
         });
       });
 
-    // Sort by date + id timestamp — id used as tiebreaker for same-day entries
-    timeline.sort((a, b) => {
-      const dateDiff = new Date(a.date) - new Date(b.date);
-      const tiebreak = (a.id || 0) - (b.id || 0); // id=Date.now() for payments, 0 for sale entries
-      const diff = dateDiff !== 0 ? dateDiff : tiebreak;
-      return LEDGER._phAsc ? diff : -diff;
-    });
-
-    if (!timeline.length) {
+    if (!entries.length) {
       el.innerHTML = UI.empty('💳', 'No payments yet', 'No payments received from this customer yet.');
       return;
     }
 
-    const totalPaid = timeline.reduce((a, t) => a + t.amount, 0);
+    // Sort: by date, then by id as tiebreaker
+    entries.sort((a, b) => {
+      const dd = new Date(a.date) - new Date(b.date);
+      const diff = dd !== 0 ? dd : a.id - b.id;
+      return LEDGER._phAsc ? diff : -diff;
+    });
 
-    const items = timeline.map((t, i) => {
-      const icon = methodIcons[t.method] || methodIcons.default;
-      const isSale = t.type === 'sale';
-      return `<div class="ph-item">
-        <div class="ph-dot" style="background:${isSale ? 'rgba(59,130,246,.12)' : 'rgba(31,184,90,.12)'};border-color:${isSale ? 'rgba(59,130,246,.3)' : 'rgba(31,184,90,.3)'}">
-          ${isSale ? '🛒' : icon}
-        </div>
-        <div class="ph-info">
-          <div class="ph-amt">${UTIL.money(t.amount)}</div>
-          <div class="ph-meta" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-            <span class="badge ${isSale ? 'bg-blue' : 'bg-gray'}" style="font-size:10px">${UTIL.esc(t.method)}</span>
-            ${isSale ? `<span class="badge bg-gray" style="font-size:9px">INITIAL</span>` : ''}
-            ${t.note ? `<span style="font-size:11px;color:var(--text-2)">${UTIL.esc(t.note)}</span>` : ''}
-          </div>
-        </div>
-        <div class="ph-date">
-          <div style="font-weight:600;color:var(--text)">${UTIL.fmtDate(t.date)}</div>
-          <div style="font-size:10px;color:var(--text-3);margin-top:2px">${i + 1} of ${timeline.length}</div>
-        </div>
-      </div>`;
+    const totalPaid = entries.reduce((a, e) => a + e.amount, 0);
+    const atPurchaseCount = entries.filter(e => e.initial).length;
+    const laterCount      = entries.filter(e => !e.initial).length;
+
+    const items = entries.map((e, i) => {
+      const icon = mi[e.method] || mi.default;
+      const dotColor = e.initial
+        ? 'background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.3)'  // blue = initial
+        : 'background:rgba(31,184,90,.12);border-color:rgba(31,184,90,.3)';   // green = payment
+      const dotIcon = e.initial ? '🛒' : icon;
+      return '<div class="ph-item">'
+        + '<div class="ph-dot" style="' + dotColor + '">' + dotIcon + '</div>'
+        + '<div class="ph-info">'
+          + '<div class="ph-amt">' + UTIL.money(e.amount) + '</div>'
+          + '<div class="ph-meta" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+            + '<span class="badge bg-gray" style="font-size:10px">' + UTIL.esc(e.method) + '</span>'
+            + (e.initial ? '<span class="badge bg-blue" style="font-size:9px">AT PURCHASE</span>' : '')
+            + (e.inv ? '<span class="badge bg-gray" style="font-size:9px">' + UTIL.esc(e.inv) + '</span>' : '')
+            + (e.note && !e.initial ? '<span style="font-size:11px;color:var(--text-2)">' + UTIL.esc(e.note) + '</span>' : '')
+            + (e.initial ? '<span style="font-size:11px;color:var(--text-3)">Received at purchase</span>' : '')
+          + '</div>'
+        + '</div>'
+        + '<div class="ph-date">'
+          + '<div style="font-weight:600;color:var(--text)">' + UTIL.fmtDate(e.date) + '</div>'
+          + '<div style="font-size:10px;color:var(--text-3);margin-top:2px">' + (i+1) + ' of ' + entries.length + '</div>'
+        + '</div>'
+      + '</div>';
     }).join('');
 
     const sortLabel = LEDGER._phAsc ? '↑ Oldest first' : '↓ Latest first';
     el.innerHTML =
-      '<div style="padding:10px 16px;background:var(--gold-f);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
-        '<div><span style="font-size:12px;color:var(--text-2)">' +
-          timeline.length + ' payment' + (timeline.length!==1?'s':'') + ' total' +
-          ' &nbsp;·&nbsp; ' + DB.payments.filter(p=>p.cid===cid).length + ' collected separately' +
-          ' &nbsp;·&nbsp; ' + DB.sales.filter(s=>s.cid===cid&&s.paid>0).length + ' at purchase' +
-        '</span></div>' +
-        '<div style="display:flex;align-items:center;gap:10px">' +
-          '<button onclick="LEDGER._phAsc=!LEDGER._phAsc;LEDGER.showTab(\'payments\',null)" ' +
-            'style="background:none;border:1px solid var(--line);border-radius:4px;padding:4px 10px;font-size:11px;color:var(--text-2);cursor:pointer;font-family:var(--ff)">' +
-            sortLabel +
-          '</button>' +
-          '<span style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--green-l)">' + UTIL.money(totalPaid) + ' total</span>' +
-        '</div>' +
-      '</div>' +
-      items;
+      '<div style="padding:10px 16px;background:var(--gold-f);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">'
+        + '<div><span style="font-size:12px;color:var(--text-2)">'
+          + entries.length + ' total'
+          + (atPurchaseCount > 0 ? ' · ' + atPurchaseCount + ' at purchase' : '')
+          + (laterCount > 0 ? ' · ' + laterCount + ' collected later' : '')
+        + '</span></div>'
+        + '<div style="display:flex;align-items:center;gap:10px">'
+          + '<button onclick="LEDGER._phAsc=!LEDGER._phAsc;LEDGER.showTab(\'payments\',null)" '
+            + 'style="background:none;border:1px solid var(--line);border-radius:4px;padding:4px 10px;font-size:11px;color:var(--text-2);cursor:pointer;font-family:var(--ff)">'
+            + sortLabel
+          + '</button>'
+          + '<span style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--green-l)">' + UTIL.money(totalPaid) + ' total</span>'
+        + '</div>'
+      + '</div>'
+      + items;
+  },
+
+  openSaleTimeline(sid) {
+    const s = DB.sales.find(x => x.id === sid);
+    if (!s) return;
+    const el = document.getElementById('ledger-tbl');
+    const prod = DB.products.find(x => x.id === s.pid);
+    const pName = prod?.name || s.pname || '—';
+    const mi = { Cash:'💵', UPI:'📱', 'Bank Transfer':'🏦', Cheque:'📄', default:'💳' };
+    const rows = [{ date:s.date, id:s.id, type:'SALE', label:s.inv+' · '+pName+' x'+s.qty, debit:s.total, credit:0, method:s.method }];
+    DB.payments.filter(px => px.sid === s.id).sort((a,b) => a.id-b.id).forEach(px => {
+      rows.push({ date:px.date, id:px.id, type:'PAYMENT', label:px.note||px.method, debit:0, credit:px.amount, method:px.method });
+    });
+    let bal = 0;
+    const tableRows = rows.map(r => {
+      bal += r.debit - r.credit;
+      const icon = r.type==='SALE' ? '🛒' : (mi[r.method]||mi.default);
+      return '<tr>'
+        + '<td class="dim">' + UTIL.fmtDate(r.date) + '</td>'
+        + '<td><span class="badge '+(r.type==='SALE'?'bg-blue':'bg-green')+'" style="font-size:10px">'+r.type+'</span></td>'
+        + '<td style="font-size:12.5px">' + icon + ' ' + UTIL.esc(r.label) + '</td>'
+        + '<td class="gold">'  + (r.debit  > 0 ? UTIL.money(r.debit)  : '—') + '</td>'
+        + '<td class="green">' + (r.credit > 0 ? UTIL.money(r.credit) : '—') + '</td>'
+        + '<td class="'+(bal>0?'red':'green')+' mono">' + UTIL.money(bal) + '</td>'
+      + '</tr>';
+    }).join('');
+    el.innerHTML =
+      '<div style="padding:10px 14px;background:var(--ink-3);border-radius:var(--r2);margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+        + '<button class="btn btn-ghost btn-xs" onclick="LEDGER.renderSalesTab('+s.cid+')\">\u2190 Back to Sales</button>'
+        + '<span style="font-size:13px;font-weight:700">' + UTIL.esc(s.inv) + ' — Transaction History</span>'
+        + '<span style="font-size:12px;color:var(--text-2)">Billed: '+UTIL.money(s.total)+' · Paid: '+UTIL.money(s.paid)+' · Due: '+UTIL.money(s.pending)+'</span>'
+        + (s.pending > 0
+          ? '<button class="btn btn-gold btn-xs" onclick="PAYMENT.openForSale('+s.id+')">+ Payment</button>'
+          : '<span class="badge bg-green" style="font-size:10px">✓ Fully Paid</span>')
+      + '</div>'
+      + '<div class="tbl-wrap"><table>'
+        + '<thead><tr><th>Date</th><th>Type</th><th>Details</th><th>Billed</th><th>Received</th><th>Balance</th></tr></thead>'
+        + '<tbody>' + tableRows + '</tbody>'
+      + '</table></div>';
   },
 
   exportCSV() {
@@ -2466,18 +2577,7 @@ const INVOICE = {
     const cfg = DB.settings;
     const logoSrc = document.querySelector('.login-logo-img')?.src || '';
 
-    // GST calculation
-    const gstRate    = p?.gst_rate || 0;
-    const taxable    = s.total;
-    const gstAmount  = Math.round((taxable * gstRate / 100) * 100) / 100;
-    const grandTotal = taxable + gstAmount;
-    const halfGst    = gstAmount / 2;
-
-    const gstBlock = gstRate > 0 ? `
-      <div class="inv-tot-row"><span style="color:#888">Taxable Value</span><span>&#8377;${taxable.toLocaleString('en-IN')}</span></div>
-      <div class="inv-tot-row"><span style="color:#888">CGST @ ${gstRate/2}%</span><span>&#8377;${halfGst.toLocaleString('en-IN',{minimumFractionDigits:2})}</span></div>
-      <div class="inv-tot-row"><span style="color:#888">SGST @ ${gstRate/2}%</span><span>&#8377;${halfGst.toLocaleString('en-IN',{minimumFractionDigits:2})}</span></div>
-      <div class="inv-tot-row" style="border-top:1px solid #e5e7eb;padding-top:6px;margin-top:2px;font-weight:700"><span>Grand Total (incl. GST)</span><span>&#8377;${grandTotal.toLocaleString('en-IN',{minimumFractionDigits:2})}</span></div>` : '';
+    // GST removed from invoice
 
     const invoiceHtml = `<div class="inv-doc" id="inv-printable">
       <div class="inv-head">
@@ -2513,15 +2613,12 @@ const INVOICE = {
         </div>
       </div>
       <table class="inv-tbl">
-        <thead><tr><th>#</th><th>Description</th><th>Size</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr></thead>
+        <thead><tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr></thead>
         <tbody><tr>
           <td>1</td>
           <td><strong>${UTIL.esc(p?.name||'—')}</strong><br><span style="font-size:11px;color:#888">${UTIL.esc(p?.category||'')}</span></td>
-          <td style="font-size:12px;color:#888">${UTIL.esc(p?.hsn||'—')}</td>
-          <td>${UTIL.esc(p?.size||'—')}</td>
           <td>${s.qty}</td>
           <td>&#8377;${(s.price||0).toLocaleString('en-IN')}</td>
-          <td>${gstRate}%</td>
           <td><strong>&#8377;${s.total.toLocaleString('en-IN')}</strong></td>
         </tr></tbody>
       </table>
@@ -2538,6 +2635,12 @@ const INVOICE = {
     UI.openModal('m-invoice');
   },
 
+
+  editSale() {
+    // Open sale edit form for the current invoice's sale
+    UI.closeModal('m-invoice');
+    if (this._sid) SALE.openForm(this._sid);
+  },
 
   print() {
     const el = document.getElementById('inv-printable');
