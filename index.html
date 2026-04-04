@@ -800,6 +800,7 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
         <span class="nav-badge" id="pay-badge" style="display:none">!</span>
       </div>
       <div class="nav-item" data-page="reports" onclick="UI.nav('reports',this)"><span class="ico">📊</span> Reports</div>
+      <div class="nav-item" data-page="expenses" onclick="UI.nav('expenses',this)"><span class="ico">💸</span> Expenses</div>
       <div class="nav-item" data-page="settings" onclick="UI.nav('settings',this)"><span class="ico">⚙</span> Settings</div>
     </div>
     <div class="sb-foot">
@@ -879,6 +880,11 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
         <div class="card"><div class="tbl-wrap" id="sales-tbl"></div></div>
       </div>
 
+      <!-- SALE DETAIL -->
+      <div class="page" id="page-sale-detail">
+        <div id="sale-detail-body" style="padding:4px 0"></div>
+      </div>
+
       <!-- PAYMENTS -->
       <div class="page" id="page-payments">
         <div class="flex-b mb12">
@@ -900,6 +906,7 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
             </div>
             <div class="flex-g">
               <button class="btn btn-ghost btn-xs" onclick="LEDGER.exportCSV()">↓ Export</button>
+              <button class="btn btn-ghost btn-xs" onclick="LEDGER.openOpeningBalance()">📋 Opening Balance</button>
               <button class="btn btn-ghost btn-xs" id="ledger-wa-btn">📱 WhatsApp</button>
               <button class="btn btn-gold btn-xs" id="ledger-pay-btn">+ Payment</button>
             </div>
@@ -915,12 +922,25 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
           <button class="rtab" onclick="REPORT.show('top-customers',this)">Customers</button>
           <button class="rtab" onclick="REPORT.show('top-products',this)">Products</button>
           <button class="rtab" onclick="REPORT.show('pending',this)">Pending</button>
+          <button class="rtab" onclick="REPORT.show('pl',this)">📊 P&amp;L</button>
           <button class="rtab" onclick="REPORT.show('overdue',this)">Overdue</button>
+          <button class="rtab" onclick="REPORT.show('pl',this)">📊 P&amp;L</button>
         </div>
         <div id="report-content"></div>
       </div>
 
       <!-- SETTINGS -->
+      <div class="page" id="page-expenses">
+        <div class="page-head">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-gold btn-sm" onclick="EXPENSE.openForm()">+ Add Expense</button>
+            <button class="btn btn-ghost btn-sm" onclick="EXPORT.csv('expenses')">&#8595; CSV</button>
+          </div>
+        </div>
+        <div id="expenses-summary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px"></div>
+        <div id="expenses-list"></div>
+      </div>
+
       <div class="page" id="page-settings">
         <div class="card mb12">
           <div class="card-head"><div class="card-title">Company Information</div></div>
@@ -1040,6 +1060,7 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
     </div>
     <div class="modal-body">
       <input type="hidden" id="p-eid">
+      <input type="hidden" id="p-price" value="0">
       <div class="field"><label>Product Name *</label><input type="text" id="p-name" placeholder="e.g. 4.5 Inch DTH Bore Bit" autocomplete="off"></div>
       <div class="frow">
         <div class="field"><label>Category</label>
@@ -1052,9 +1073,10 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
         <div class="field"><label>Size</label><input type="text" id="p-size" placeholder="e.g. 4.5 inch" autocomplete="off"></div>
       </div>
       <div class="frow">
-        <div class="field"><label>Selling Price (₹) *</label><input type="number" id="p-price" placeholder="0" min="0" inputmode="decimal"></div>
+        <div class="field"><label>Default Cost Price (₹)</label><input type="number" id="p-cost" placeholder="0" min="0" inputmode="decimal"></div>
         <div class="field"><label>Stock Quantity</label><input type="number" id="p-stock" placeholder="0" min="0" inputmode="numeric"></div>
       </div>
+      <div style="font-size:11.5px;color:var(--text-3);padding:2px 0 8px">Selling price is set per batch when adding stock.</div>
 
     </div>
     <div class="modal-foot">
@@ -1068,15 +1090,29 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
 <div class="overlay" id="m-stock">
   <div class="modal" style="max-width:340px">
     <div class="modal-head">
-      <div class="modal-title">Update Stock</div>
+      <div class="modal-title">Add Purchase Lot</div>
       <button class="modal-close" onclick="UI.closeModal('m-stock')">×</button>
     </div>
     <div class="modal-body">
       <div style="font-size:12.5px;color:var(--text-2);margin-bottom:12px">
-        Product: <strong id="stk-pname" style="color:var(--text)">—</strong><br>
-        Current stock: <strong id="stk-curr" style="color:var(--gold-l);font-family:var(--mono)">0</strong> units
+        Product: <strong id="stk-pname" style="color:var(--text)">—</strong> &nbsp;
+        <span style="font-size:11px;color:var(--text-3)">Total stock: <span id="stk-curr" style="color:var(--gold-l);font-family:var(--mono)">0</span> units</span>
       </div>
-      <div class="field"><label>Quantity to Add *</label><input type="number" id="stk-qty" placeholder="Units to add" min="1" inputmode="numeric"></div>
+      <div class="frow">
+        <div class="field"><label>Batch Date *</label>
+          <input type="date" id="stk-date">
+        </div>
+        <div class="field"><label>Quantity *</label>
+          <input type="number" id="stk-qty" placeholder="Units received" min="1" inputmode="numeric">
+        </div>
+      </div>
+      <div class="field"><label>Cost Price / unit (₹) *</label>
+          <input type="number" id="stk-cost" placeholder="What you paid" min="0" inputmode="decimal">
+      </div>
+      <input type="hidden" id="stk-sell" value="">
+      <div class="field"><label>Batch Notes (optional)</label>
+        <input type="text" id="stk-note" placeholder="e.g. Supplier name, PO number" autocomplete="off">
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="UI.closeModal('m-stock')">Cancel</button>
@@ -1105,17 +1141,28 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
         <div class="field"><label>Product *</label>
           <select id="s-prod" onchange="SALE.onProductChange()"><option value="">Select product…</option></select>
         </div>
-        <div class="field"><label>Quantity *</label>
-          <input type="number" id="s-qty" value="1" min="1" inputmode="numeric" oninput="SALE.calc()">
+        <div class="field"><label>Purchase Lot (select if multiple prices)</label>
+          <select id="s-batch"><option value="">— Use default product price —</option></select>
         </div>
       </div>
       <div class="frow">
+        <div class="field"><label>Quantity *</label>
+          <input type="number" id="s-qty" value="1" min="1" inputmode="numeric" oninput="SALE.calc()">
+        </div>
         <div class="field"><label>Unit Price (₹) *</label>
           <input type="number" id="s-price" placeholder="0" min="0" inputmode="decimal" oninput="SALE.calc()">
         </div>
+      </div>
+      <!-- hidden fields keep old guarantee IDs so JS doesn't crash -->
+      <input type="hidden" id="s-guarantee-mm" value="">
+      <input type="hidden" id="s-use-guarantee" value="">
+      <input type="hidden" id="s-guarantee-section">
+      <input type="hidden" id="s-rate-mm">
+      <div class="frow">
         <div class="field"><label>Total Amount (₹)</label>
           <div class="field-calc" id="s-total">0.00</div>
         </div>
+        <div class="field"></div>
       </div>
       <div class="frow">
         <div class="field"><label>Amount Paid (₹)</label>
@@ -1159,8 +1206,13 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
           Outstanding: <span style="color:var(--red);font-family:var(--mono);font-weight:600" id="pay-pend-disp">₹0</span>
         </div>
       </div>
-      <div class="field"><label>Amount Received (₹) *</label>
-        <input type="number" id="pay-amt" placeholder="Enter amount" min="0.01" step="0.01" inputmode="decimal">
+      <div class="frow">
+        <div class="field"><label>Date *</label>
+          <input type="date" id="pay-date">
+        </div>
+        <div class="field"><label>Amount Received (₹) *</label>
+          <input type="number" id="pay-amt" placeholder="Enter amount" min="0.01" step="0.01" inputmode="decimal">
+        </div>
       </div>
       <div class="frow">
         <div class="field"><label>Method</label>
@@ -1191,7 +1243,7 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
     <div class="modal-body" id="invoice-body"></div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="UI.closeModal('m-invoice')">Close</button>
-      <button class="btn btn-ghost" id="inv-edit-btn" onclick="INVOICE.editSale()">✏ Edit Sale</button>
+      <button class="btn btn-ghost" onclick="INVOICE.editSaleWithPwd()">✏ Edit Sale</button>
       <button class="btn btn-gold" onclick="INVOICE.print()">🖨 Print / PDF</button>
     </div>
   </div>
@@ -1201,6 +1253,152 @@ if (localStorage.getItem('UBE_SESSION') === 'loggedin') {
 
 
 
+
+<!-- BROKEN (GUARANTEE ADJUSTMENT) MODAL -->
+<div class="overlay" id="m-broken">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-head">
+      <div class="modal-title" style="color:var(--red)">&#128308; Broken — Guarantee Adjustment</div>
+      <button class="modal-close" onclick="UI.closeModal('m-broken')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="brk-sid">
+      <div style="font-size:12.5px;color:var(--text-2);background:var(--ink-3);border-radius:var(--r2);padding:10px 13px;margin-bottom:14px">
+        Sell Price: <strong id="brk-sell" class="gold">—</strong>
+        &nbsp;&middot;&nbsp; Enter guarantee and used MM to recalculate total.
+      </div>
+      <div class="frow">
+        <div class="field"><label>Guarantee MM *</label>
+          <input type="number" id="brk-guarantee" placeholder="e.g. 8" min="0" step="0.1"
+            inputmode="decimal" oninput="SALE.calcBrokenPreview()">
+        </div>
+        <div class="field"><label>Used MM *</label>
+          <input type="number" id="brk-used" placeholder="e.g. 4" min="0" step="0.1"
+            inputmode="decimal" oninput="SALE.calcBrokenPreview()">
+        </div>
+      </div>
+      <div id="brk-preview" style="background:var(--gold-f);border-radius:var(--r2);
+        padding:12px 14px;margin-top:4px;min-height:44px">&mdash;</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="UI.closeModal('m-broken')">Cancel</button>
+      <button class="btn btn-danger" onclick="SALE.saveBroken()">Confirm &amp; Recalculate</button>
+    </div>
+  </div>
+</div>
+
+<!-- UPDATE USED MM MODAL -->
+<div class="overlay" id="m-update-mm">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-head">
+      <div class="modal-title">⚙ Enter Used MM</div>
+      <button class="modal-close" onclick="UI.closeModal('m-update-mm')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="mm-sid">
+      <div id="mm-sale-info" style="font-size:12.5px;color:var(--text-2);background:var(--ink-3);border-radius:var(--r2);padding:10px 12px;margin-bottom:12px;line-height:1.6"></div>
+      <div class="field"><label>Used MM *</label>
+        <input type="number" id="mm-used" placeholder="How many mm did the bit work?" min="0" step="0.1" inputmode="decimal" oninput="SALE.calcMMPreview()">
+      </div>
+      <div id="mm-preview" style="font-size:13px;font-weight:600;color:var(--green-l);background:var(--gold-f);border-radius:var(--r2);padding:10px 12px;margin-top:8px">—</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="UI.closeModal('m-update-mm')">Cancel</button>
+      <button class="btn btn-gold" onclick="SALE.saveUsedMM()">Save &amp; Calculate</button>
+    </div>
+  </div>
+</div>
+
+<!-- OPENING BALANCE MODAL -->
+<div class="overlay" id="m-opening-bal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-head">
+      <div class="modal-title">Add Opening Balance</div>
+      <button class="modal-close" onclick="UI.closeModal('m-opening-bal')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:rgba(212,146,10,.08);border:1px solid rgba(212,146,10,.2);border-radius:var(--r2);padding:10px 13px;margin-bottom:14px;font-size:12.5px;color:var(--text-2)">
+        Use this to record amounts a customer owed <strong>before</strong> you started using this app.
+      </div>
+      <div class="frow">
+        <div class="field"><label>As of Date *</label>
+          <input type="date" id="ob-date">
+        </div>
+        <div class="field"><label>Amount Owed (₹) *</label>
+          <input type="number" id="ob-amount" placeholder="0" min="0" inputmode="decimal">
+        </div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Amount Already Paid (₹)</label>
+          <input type="number" id="ob-paid" placeholder="0" value="0" min="0" inputmode="decimal">
+        </div>
+        <div class="field"><label>Description</label>
+          <input type="text" id="ob-note" placeholder="e.g. Previous balance" autocomplete="off">
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="UI.closeModal('m-opening-bal')">Cancel</button>
+      <button class="btn btn-gold" onclick="LEDGER.saveOpeningBalance()">Save Balance</button>
+    </div>
+  </div>
+</div>
+
+<!-- EXPENSE MODAL -->
+<div class="overlay" id="m-expense">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head">
+      <div class="modal-title" id="m-exp-ttl">Add Expense</div>
+      <button class="modal-close" onclick="UI.closeModal('m-expense')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="e-eid">
+      <div class="frow">
+        <div class="field"><label>Date *</label>
+          <input type="date" id="e-date">
+        </div>
+        <div class="field"><label>Amount (&#8377;) *</label>
+          <input type="number" id="e-amount" placeholder="0" min="0" inputmode="decimal">
+        </div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Category</label>
+          <select id="e-cat" onchange="EXPENSE.onCatChange()">
+            <option>Diesel</option><option>Salary</option>
+            <option>Transport</option><option>Maintenance</option>
+            <option>Rent</option><option>Labour</option>
+            <option>Materials</option><option>Tools &amp; Equipment</option>
+            <option>Other (specify)</option>
+          </select>
+        </div>
+        <div class="field"><label>Description *</label>
+          <input type="text" id="e-note" placeholder="What was this for?" autocomplete="off">
+        </div>
+      </div>
+      <div class="field" id="e-other-wrap" style="display:none">
+        <label>Custom Category Name</label>
+        <input type="text" id="e-custom-cat" placeholder="Enter category" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>Customer (optional)</label>
+        <select id="e-customer-link" onchange="EXPENSE.onCustomerChange()">
+          <option value="">&#8212; Not linked to a customer &#8212;</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Linked Sales (optional &#8212; hold Ctrl/Cmd for multiple)</label>
+        <select id="e-sale-link" multiple
+          style="min-height:88px;border-radius:var(--r1);border:1px solid var(--line);
+                 background:var(--ink-2);color:var(--text);padding:6px;font-size:12px;width:100%">
+        </select>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="UI.closeModal('m-expense')">Cancel</button>
+      <button class="btn btn-gold" onclick="EXPENSE.save()">Save Expense</button>
+    </div>
+  </div>
+</div>
 
 <!-- PASSWORD CONFIRM MODAL -->
 <div class="overlay" id="m-pwd-confirm">
@@ -1275,16 +1473,16 @@ const DATABASE = (() => {
   const KEY = APP_CONFIG.DB_KEY;
 
   const DB = {
-    customers: [], products: [], sales: [], payments: [],
+    customers: [], products: [], sales: [], payments: [], expenses: [],
     settings: {
       name: APP_CONFIG.APP_NAME, phone: '', email: '',
       gst: '', address: '', username: 'admin', password: 'admin123'
     },
-    _cid:1, _pid:1, _sid:1, _inv:1,
-    _ts: 0   // last-write timestamp — whichever device has the highest _ts wins
+    _cid:1, _pid:1, _sid:1, _inv:1, _eid:1, _bid:1, _ts:0,
+    productBatches: []
   };
 
-  let isSyncing = false; // prevents Firebase listener from overwriting our own writes
+  let isSyncing = false;
 
   function setSync(state, msg) {
     const ind = document.getElementById('sync-indicator');
@@ -1294,172 +1492,109 @@ const DATABASE = (() => {
     txt.textContent = msg;
   }
 
-  // ── SAVE ──────────────────────────────────────────────────────
-  // 1. Stamp with current timestamp
-  // 2. Save to localStorage immediately
-  // 3. Set isSyncing = true so listener ignores the echo
-  // 4. Push to Firebase using update() (not set())
-  // 5. Reset isSyncing after confirmed
   function save() {
-    DB._ts = Date.now(); // stamp every write with current time
-
-    // 1. localStorage — instant, always
-    try { localStorage.setItem(KEY, JSON.stringify(DB)); }
-    catch(e) { console.error('[DB] localStorage failed:', e); }
-
-    // 2. Firebase
+    DB._ts = Date.now();
+    try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch(e) {}
     if (typeof db !== 'undefined') {
       isSyncing = true;
       setSync('syncing', 'Saving…');
       db.ref(APP_CONFIG.FB_PATH).update(DB)
         .then(function() {
           setSync('synced', 'Synced');
-          // Keep isSyncing true for 2s to absorb any delayed echo
           setTimeout(function() { isSyncing = false; }, 2000);
         })
         .catch(function(e) {
           isSyncing = false;
-          console.error('[DB] Firebase update failed:', e);
           setSync('unsynced', 'Not synced');
           TOAST.show('Cloud save failed — saved locally', 'info');
         });
     }
   }
 
-  // ── LOAD ──────────────────────────────────────────────────────
   function load() {
-    // 1. localStorage first
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {
         const p = JSON.parse(raw);
-        DB.customers = p.customers || []; DB.products = p.products || [];
-        DB.sales     = p.sales     || []; DB.payments = p.payments || [];
-        Object.assign(DB.settings, p.settings || {});
-        DB._cid = p._cid||1; DB._pid = p._pid||1;
-        DB._sid = p._sid||1; DB._inv = p._inv||1;
-        DB._ts  = p._ts  ||0;
+        DB.customers = p.customers||[]; DB.products  = p.products||[];
+        DB.sales     = p.sales    ||[]; DB.payments  = p.payments||[];
+        DB.expenses  = p.expenses ||[];
+        Object.assign(DB.settings, p.settings||{});
+        DB._cid=p._cid||1; DB._pid=p._pid||1; DB._sid=p._sid||1;
+        DB._inv=p._inv||1; DB._eid=p._eid||1; DB._bid=p._bid||1;
+        DB._ts =p._ts ||0;
+        DB.productBatches = p.productBatches||[];
       }
-    } catch(e) { console.error('[DB] localStorage load failed:', e); }
+    } catch(e) { console.error('[DB] load failed:',e); }
 
     if (typeof db !== 'undefined') {
-      // Connection indicator
-      db.ref('.info/connected').on('value', function(snap) {
-        setSync(snap.val() ? 'synced' : 'unsynced', snap.val() ? 'Synced' : 'Offline');
+      db.ref('.info/connected').on('value', function(s) {
+        setSync(s.val()?'synced':'unsynced', s.val()?'Synced':'Offline');
       });
-
-      // Live listener — only accepts cloud data if cloud._ts > local DB._ts
-      // This means: whoever wrote LAST wins. Deletions always win because
-      // save() stamps a fresh timestamp before pushing.
       db.ref(APP_CONFIG.FB_PATH).on('value', function(snapshot) {
         try {
-          // isSyncing = we just wrote this — ignore our own echo
-          if (isSyncing) {
-            console.log('[DB] isSyncing — ignoring own echo');
-            return;
-          }
-
+          if (isSyncing) return;
           var cloud = snapshot.val();
-          if (!cloud || typeof cloud !== 'object') {
-            setSync('synced', 'Synced');
-            return;
-          }
-
-          var cloudTs = cloud._ts || 0;
-          var localTs = DB._ts   || 0;
-
-          // Cloud is older than our last write — ignore it
-          // This is the KEY check: after delete, local _ts > cloud _ts
-          // so deleted data cannot come back
-          if (cloudTs <= localTs) {
-            console.log('[DB] Cloud older (cloudTs=' + cloudTs + ' localTs=' + localTs + ') — ignored');
-            setSync('synced', 'Synced');
-            return;
-          }
-
-          // Cloud is genuinely newer (another device made a change) — accept it
-          DB.customers = cloud.customers || [];
-          DB.products  = cloud.products  || [];
-          DB.sales     = cloud.sales     || [];
-          DB.payments  = cloud.payments  || [];
-          Object.assign(DB.settings, cloud.settings || {});
-          DB._cid = cloud._cid||1; DB._pid = cloud._pid||1;
-          DB._sid = cloud._sid||1; DB._inv = cloud._inv||1;
-          DB._ts  = cloudTs;
-
+          if (!cloud || typeof cloud !== 'object') { setSync('synced','Synced'); return; }
+          var cloudTs = cloud._ts||0, localTs = DB._ts||0;
+          if (cloudTs <= localTs) { setSync('synced','Synced'); return; }
+          DB.customers = cloud.customers||[]; DB.products  = cloud.products||[];
+          DB.sales     = cloud.sales    ||[]; DB.payments  = cloud.payments||[];
+          DB.expenses  = cloud.expenses ||[];
+          Object.assign(DB.settings, cloud.settings||{});
+          DB._cid=cloud._cid||1; DB._pid=cloud._pid||1; DB._sid=cloud._sid||1;
+          DB._inv=cloud._inv||1; DB._eid=cloud._eid||1; DB._bid=cloud._bid||1;
+          DB.productBatches=cloud.productBatches||[]; DB._ts=cloudTs;
           localStorage.setItem(KEY, JSON.stringify(DB));
-          setSync('synced', 'Synced');
-          console.log('[DB] Cloud accepted — ts:', cloudTs, 'customers:', DB.customers.length);
-
+          setSync('synced','Synced');
           try {
-            if (typeof DASHBOARD !== 'undefined') DASHBOARD.render();
-            if (typeof CUSTOMER  !== 'undefined') CUSTOMER.render(DB.customers);
-            if (typeof PRODUCT   !== 'undefined') PRODUCT.render(DB.products);
-            if (typeof SALE      !== 'undefined') SALE.render(DB.sales);
-            if (typeof PAYMENT   !== 'undefined') PAYMENT.render();
-          } catch(re) { console.error('[DB] render error:', re); }
-
-        } catch(e) {
-          console.error('[DB] Sync error:', e);
-          setSync('unsynced', 'Sync error');
-        }
+            if(typeof DASHBOARD!=='undefined') DASHBOARD.render();
+            if(typeof CUSTOMER !=='undefined') CUSTOMER.render(DB.customers);
+            if(typeof PRODUCT  !=='undefined') PRODUCT.render(DB.products);
+            if(typeof SALE     !=='undefined') SALE.render(DB.sales);
+            if(typeof PAYMENT  !=='undefined') PAYMENT.render();
+          } catch(re) {}
+        } catch(e) { setSync('unsynced','Sync error'); }
       });
-    } else {
-      setSync('unsynced', 'No Firebase');
-    }
+    } else { setSync('unsynced','No Firebase'); }
   }
 
-  // ── RESET ─────────────────────────────────────────────────────
   function reset() {
-    DB.customers = []; DB.products = []; DB.sales = []; DB.payments = [];
-    DB._cid = 1; DB._pid = 1; DB._sid = 1; DB._inv = 1;
-    DB._ts  = Date.now(); // stamp NOW so cloud echo (with old _ts) is rejected
-
-    try {
-      localStorage.removeItem(KEY);
-      localStorage.setItem(KEY, JSON.stringify(DB));
-    } catch(e) {}
-
+    DB.customers=[]; DB.products=[]; DB.sales=[]; DB.payments=[]; DB.expenses=[];
+    DB._cid=1; DB._pid=1; DB._sid=1; DB._inv=1; DB._eid=1;
+    DB._ts = Date.now();
+    try { localStorage.removeItem(KEY); localStorage.setItem(KEY,JSON.stringify(DB)); } catch(e) {}
     if (typeof db !== 'undefined') {
       isSyncing = true;
-      setSync('syncing', 'Clearing…');
+      setSync('syncing','Clearing…');
       db.ref(APP_CONFIG.FB_PATH).update(DB)
-        .then(function() {
-          setSync('synced', 'Cleared');
-          setTimeout(function() { isSyncing = false; }, 3000);
-        })
-        .catch(function(e) {
-          isSyncing = false;
-          console.error('[DB] Firebase reset failed:', e);
-        });
+        .then(function() { setSync('synced','Cleared'); setTimeout(function(){isSyncing=false;},3000); })
+        .catch(function(e) { isSyncing=false; });
     }
   }
 
-  // ── SYNC NOW ──────────────────────────────────────────────────
   function syncNow() {
     var btn = document.getElementById('sync-btn');
-    if (btn) { btn.textContent = '↑ Syncing…'; btn.disabled = true; }
-    setSync('syncing', 'Syncing…');
+    if (btn) { btn.textContent='↑ Syncing…'; btn.disabled=true; }
+    setSync('syncing','Syncing…');
     DB._ts = Date.now();
-    try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch(e) {}
+    try { localStorage.setItem(KEY,JSON.stringify(DB)); } catch(e) {}
     if (typeof db !== 'undefined') {
       isSyncing = true;
       db.ref(APP_CONFIG.FB_PATH).update(DB)
         .then(function() {
-          setSync('synced', 'Synced');
-          TOAST.show('✓ Synced to cloud', 'ok');
-          if (btn) { btn.textContent = '↑ Sync'; btn.disabled = false; }
-          setTimeout(function() { isSyncing = false; }, 2000);
+          setSync('synced','Synced'); TOAST.show('✓ Synced to cloud','ok');
+          if(btn){btn.textContent='↑ Sync';btn.disabled=false;}
+          setTimeout(function(){isSyncing=false;},2000);
         })
         .catch(function(e) {
-          isSyncing = false;
-          setSync('unsynced', 'Not synced');
-          TOAST.show('Sync failed — check connection', 'err');
-          if (btn) { btn.textContent = '↑ Sync'; btn.disabled = false; }
+          isSyncing=false; setSync('unsynced','Not synced');
+          TOAST.show('Sync failed','err');
+          if(btn){btn.textContent='↑ Sync';btn.disabled=false;}
         });
     } else {
-      TOAST.show('Firebase not available', 'err');
-      if (btn) { btn.textContent = '↑ Sync'; btn.disabled = false; }
+      TOAST.show('Firebase not available','err');
+      if(btn){btn.textContent='↑ Sync';btn.disabled=false;}
     }
   }
 
@@ -1470,7 +1605,7 @@ const DATABASE = (() => {
 
 const { DB } = DATABASE;
 
-// Auto-save every 5 seconds
+// Auto-save every 5 seconds (belt + suspenders)
 setInterval(() => DATABASE.save(), 5000);
 
 // Save on page hide/close
@@ -1491,7 +1626,7 @@ const UTIL = {
   invNum() {
     const n = DB._inv++;
     DATABASE.save();
-    return APP_CONFIG.INV_PREFIX + '-' + String(n).padStart(3, '0'); // UBE-001, UBE-002...
+    return APP_CONFIG.INV_PREFIX + '-' + String(n).padStart(3, '0');
   },
   custTotal(cid)   { return DB.sales.filter(s => s.cid === cid).reduce((a, s) => a + (s.total   || 0), 0); },
   custPending(cid) { return DB.sales.filter(s => s.cid === cid).reduce((a, s) => a + (s.pending || 0), 0); },
@@ -1504,6 +1639,14 @@ const UTIL = {
       return false;
     }
     return true;
+  },
+
+  // Guarantee MM billing formula
+  calcMM(sell_price, guarantee_mm, used_mm) {
+    if (!guarantee_mm || guarantee_mm <= 0) return sell_price;
+    if (used_mm >= guarantee_mm) return sell_price; // full price
+    const rate = sell_price / guarantee_mm;
+    return Math.round(used_mm * rate * 100) / 100;
   },
 
   daysSince(dateStr) {
@@ -1600,7 +1743,8 @@ const UI = {
     const titles = {
       dashboard: 'Dashboard', customers: 'Customers', products: 'Products',
       sales: 'Sales', payments: 'Payments', reports: 'Reports',
-      settings: 'Settings', ledger: 'Customer Ledger'
+      expenses: 'Expenses', settings: 'Settings', ledger: 'Customer Ledger',
+      'sale-detail': 'Sale Details'
     };
     document.getElementById('page-title').textContent = titles[page] || page;
     document.getElementById('fab').classList.toggle('show', ['dashboard', 'sales'].includes(page));
@@ -1614,6 +1758,7 @@ const UI = {
       sales:     () => SALE.render(DB.sales),
       payments:  PAYMENT.render,
       reports:   () => REPORT.show('monthly', document.querySelector('.rtab.active')),
+      expenses:  () => EXPENSE.render(),
       settings:  SETTINGS.load,
     };
     if (renders[page]) renders[page]();
@@ -1684,16 +1829,28 @@ const APP = {
 ════════════════════════════════ */
 const DASHBOARD = {
   render() {
-    const today    = UTIL.today();
-    const todayRev = DB.sales.filter(s => s.date === today).reduce((a, s) => a + s.total, 0);
-    const totalPnd = DB.customers.reduce((a, c) => a + UTIL.custPending(c.id), 0);
-    const lowStock = DB.products.filter(p => p.stock <= 5).length;
-
+    const today   = UTIL.today();
+    const now     = new Date();
+    const todayRev = DB.sales.filter(s=>s.date===today).reduce((a,s)=>a+s.total,0);
+    const totalPnd = DB.customers.reduce((a,c)=>a+UTIL.custPending(c.id),0);
+    const lowStock = DB.products.filter(p=>p.stock<=5).length;
+    const todayProfit = DB.sales.filter(s=>s.date===today).reduce((a,s)=>a+(s.profit||0),0);
+    const monthProfit = DB.sales.filter(s=>{
+      const d=new Date(s.date);
+      return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth();
+    }).reduce((a,s)=>a+(s.profit||0),0);
+    const totalProfit  = DB.sales.reduce((a,s)=>a+(s.profit||0),0);
+    const totalExpense = (DB.expenses||[]).reduce((a,e)=>a+(e.amount||0),0);
+    const netProfit    = totalProfit - totalExpense;
     document.getElementById('dash-cards').innerHTML = `
       <div class="dash-card c-gold"><div class="dc-ico">₹</div><div class="dc-val c-gold">${UTIL.money(todayRev)}</div><div class="dc-lbl">Today's Sales</div></div>
       <div class="dash-card c-blue"><div class="dc-ico">👥</div><div class="dc-val c-blue">${DB.customers.length}</div><div class="dc-lbl">Total Customers</div></div>
       <div class="dash-card c-red"><div class="dc-ico">⏳</div><div class="dc-val c-red">${UTIL.money(totalPnd)}</div><div class="dc-lbl">Pending Payments</div></div>
-      <div class="dash-card c-${lowStock > 0 ? 'red' : 'green'}"><div class="dc-ico">📦</div><div class="dc-val c-${lowStock > 0 ? 'red' : 'green'}">${lowStock}</div><div class="dc-lbl">Low Stock Items</div></div>`;
+      <div class="dash-card c-${lowStock>0?'red':'green'}"><div class="dc-ico">📦</div><div class="dc-val c-${lowStock>0?'red':'green'}">${lowStock}</div><div class="dc-lbl">Low Stock Items</div></div>
+      <div class="dash-card c-green"><div class="dc-ico">📈</div><div class="dc-val c-green">${UTIL.money(todayProfit)}</div><div class="dc-lbl">Today's Profit</div></div>
+      <div class="dash-card c-blue"><div class="dc-ico">📅</div><div class="dc-val c-blue">${UTIL.money(monthProfit)}</div><div class="dc-lbl">Month Profit</div></div>
+      <div class="dash-card c-green"><div class="dc-ico">✨</div><div class="dc-val c-green">${UTIL.money(totalProfit)}</div><div class="dc-lbl">Gross Profit</div></div>
+      <div class="dash-card c-${netProfit>=0?'green':'red'}"><div class="dc-ico">🎯</div><div class="dc-val c-${netProfit>=0?'green':'red'}">${UTIL.money(netProfit)}</div><div class="dc-lbl">Net Profit</div></div>`;
 
     // Overdue alert banner
     const overdueCustomers = DB.customers.filter(c => {
@@ -1722,12 +1879,11 @@ const DASHBOARD = {
     const rows = [...DB.sales].reverse().slice(0, 8).map(s => {
       const c = DB.customers.find(x => x.id === s.cid);
       const p = DB.products.find(x => x.id === s.pid);
-      const cName = c?.name || s.cname || '?';
-      const pName = p?.name || s.pname || '?';
+      // FIX: removed erroneous Number() wrapper around CSS string
       return `<div style="display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)">
         <div style="width:7px;height:7px;border-radius:50%;background:${s.pending > 0 ? 'var(--gold)' : 'var(--green)'};flex-shrink:0"></div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${UTIL.esc(cName)} — ${UTIL.esc(pName)}</div>
+          <div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${UTIL.esc(c?.name||'?')} — ${UTIL.esc(p?.name||'?')}</div>
           <div style="font-size:11.5px;color:var(--text-2);margin-top:2px">${UTIL.fmtDate(s.date)} · ${s.inv}</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
@@ -1805,9 +1961,7 @@ const CUSTOMER = {
       UI.updatePayBadge();
       TOAST.show('Customer deleted', 'info');
     });
-  },
-
-  filter(q) {
+  },  filter(q) {
     const lq = q.toLowerCase().trim();
     this.render(lq
       ? DB.customers.filter(c =>
@@ -1861,6 +2015,7 @@ const PRODUCT = {
     document.getElementById('p-eid').value   = p ? p.id    : '';
     document.getElementById('p-name').value  = p ? p.name  : '';
     document.getElementById('p-size').value  = p ? (p.size  || '') : '';
+    document.getElementById('p-cost').value  = p ? (p.cost||'') : '';
     document.getElementById('p-price').value = p ? p.price : '';
     document.getElementById('p-stock').value = p ? p.stock : '';
     if (p) document.getElementById('p-cat').value = p.category || 'DTH Bore Bit';
@@ -1870,9 +2025,8 @@ const PRODUCT = {
 
   save() {
     const name  = document.getElementById('p-name').value.trim();
-    const price = parseFloat(document.getElementById('p-price').value);
-    if (!name)          { TOAST.show('Product name required', 'err'); return; }
-    if (!price || price <= 0) { TOAST.show('Valid price required', 'err'); return; }
+    const price = parseFloat(document.getElementById('p-price')?.value) || 0;
+    if (!name) { TOAST.show('Product name required', 'err'); return; }
     const eid = document.getElementById('p-eid').value;
     if (eid) {
       const p = DB.products.find(x => x.id === parseInt(eid));
@@ -1880,6 +2034,7 @@ const PRODUCT = {
         p.name     = name;
         p.category = document.getElementById('p-cat').value;
         p.size     = document.getElementById('p-size').value.trim();
+        p.cost     = parseFloat(document.getElementById('p-cost').value) || 0;
         p.price    = price;
         p.stock    = parseInt(document.getElementById('p-stock').value) || 0;
       }
@@ -1888,6 +2043,7 @@ const PRODUCT = {
       DB.products.push({
         id:       DB._pid++,
         name, price,
+        cost:     parseFloat(document.getElementById('p-cost').value) || 0,
         category: document.getElementById('p-cat').value,
         size:     document.getElementById('p-size').value.trim(),
         stock:    parseInt(document.getElementById('p-stock').value) || 0,
@@ -1898,6 +2054,28 @@ const PRODUCT = {
     DATABASE.save();
     UI.closeModal('m-product');
     this.render(DB.products);
+  },
+
+  showBatches(pid) {
+    const p = DB.products.find(x=>x.id===pid);
+    if (!p) return;
+    const batches = (DB.productBatches||[]).filter(b=>b.productId===pid).sort((a,b)=>new Date(b.date)-new Date(a.date));
+    const wrap = document.getElementById('products-tbl');
+    const rows = batches.length ? batches.map((b,i)=>`<tr>
+      <td class="mono dim">${UTIL.fmtDate(b.date)}</td>
+      <td class="dim">${UTIL.money(b.cost_price)}</td>
+      <td class="gold">${UTIL.money(b.sell_price)}</td>
+      <td class="mono ${b.stock===0?'red':b.stock<=5?'gold':''}">${b.stock} / ${b.qty_orig}</td>
+      <td class="dim" style="font-size:11.5px">${UTIL.esc(b.note||'—')}</td>
+    </tr>`).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px">No batches yet</td></tr>';
+    wrap.innerHTML = `<div style="margin-bottom:12px;display:flex;align-items:center;gap:10px">
+      <button class="btn btn-ghost btn-sm" onclick="PRODUCT.render(DB.products)">← Back to Products</button>
+      <span style="font-size:14px;font-weight:700">${UTIL.esc(p.name)} — Stock Batches</span>
+      <button class="btn btn-gold btn-sm" onclick="PRODUCT.openStock(${pid})">+ Add Batch</button>
+    </div>
+    <div class="card"><div class="tbl-wrap"><table>
+      <thead><tr><th>Date</th><th>Cost/unit</th><th>Sell/unit</th><th>Remaining</th><th>Note</th></tr></thead>
+      <tbody>${rows}</tbody></table></div></div>`;
   },
 
   delete(id) {
@@ -1918,22 +2096,47 @@ const PRODUCT = {
     const p = DB.products.find(x => x.id === id);
     document.getElementById('stk-pname').textContent = p ? p.name  : '—';
     document.getElementById('stk-curr').textContent  = p ? p.stock : '0';
-    document.getElementById('stk-qty').value = '';
+    document.getElementById('stk-date').value = UTIL.today();
+    document.getElementById('stk-qty').value  = '';
+    document.getElementById('stk-cost').value = p?.cost ? p.cost : '';
+    document.getElementById('stk-sell').value = p?.price ? p.price : '';
+    document.getElementById('stk-note').value = '';
     UI.openModal('m-stock');
     setTimeout(() => document.getElementById('stk-qty').focus(), 100);
   },
 
   saveStock() {
-    const qty = parseInt(document.getElementById('stk-qty').value) || 0;
-    if (qty <= 0) { TOAST.show('Enter valid quantity', 'err'); return; }
+    const qty  = parseInt(document.getElementById('stk-qty').value)   || 0;
+    const cost = parseFloat(document.getElementById('stk-cost').value) || 0;
+    const date = document.getElementById('stk-date').value;
+    if (qty <= 0)  { TOAST.show('Enter quantity', 'err'); return; }
+    if (cost <= 0) { TOAST.show('Enter cost price', 'err'); return; }
+    if (!date)     { TOAST.show('Select batch date', 'err'); return; }
     const p = DB.products.find(x => x.id === this._stockId);
-    if (p) {
-      p.stock += qty;
-      DATABASE.save();
-      UI.closeModal('m-stock');
-      this.render(DB.products);
-      TOAST.show(`Added ${qty} units`);
-    }
+    if (!p) return;
+    const sellPrice = parseFloat(document.getElementById('stk-sell').value) || p.price || 0;
+    const note      = document.getElementById('stk-note').value.trim();
+    // Create batch record
+    if (!DB.productBatches) DB.productBatches = [];
+    const batch = {
+      id:        DB._bid++,
+      productId: p.id,
+      date,
+      cost_price: cost,
+      sell_price: sellPrice,
+      stock:      qty,       // remaining stock in this batch
+      qty_orig:   qty,       // original qty for reference
+      note
+    };
+    DB.productBatches.push(batch);
+    // Update product total stock + default cost price
+    p.stock += qty;
+    p.cost   = cost;       // update to latest batch cost
+    p.price  = sellPrice;  // update to latest batch sell price
+    DATABASE.save();
+    UI.closeModal('m-stock');
+    this.render(DB.products);
+    TOAST.show('Batch added — ' + qty + ' units @ ' + UTIL.money(cost) + ' each');
   },
 
   filter(q) {
@@ -1962,17 +2165,19 @@ const PRODUCT = {
         <td><strong>${UTIL.esc(p.name)}</strong></td>
         <td><span class="badge bg-gray">${UTIL.esc(p.category)}</span></td>
         <td class="dim">${UTIL.esc(p.size || '—')}</td>
+        <td class="dim">${p.cost > 0 ? UTIL.money(p.cost) : '—'}</td>
         <td class="gold">${UTIL.money(p.price)}</td>
         <td class="mono ${p.stock === 0 ? 'red' : p.stock <= 5 ? 'gold' : ''}">${UTIL.num(p.stock)}</td>
         <td>${st}</td>
         <td class="acts"><div class="flex-g">
           <button class="btn btn-ghost btn-xs" onclick="PRODUCT.openStock(${Number(p.id)})">+ Stock</button>
+          <button class="btn btn-ghost btn-xs" onclick="PRODUCT.showBatches(${Number(p.id)})">Lots</button>
           <button class="btn btn-ghost btn-xs" onclick="PRODUCT.openForm(${Number(p.id)})">Edit</button>
           <button class="btn btn-danger btn-xs" onclick="PRODUCT.delete(${Number(p.id)})">Del</button>
         </div></td>
       </tr>`;
     }).join('');
-    wrap.innerHTML = `<table><thead><tr><th>#</th><th>Product Name</th><th>Category</th><th>Size</th><th>Price</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>`;
+    wrap.innerHTML = `<table><thead><tr><th>#</th><th>Product Name</th><th>Category</th><th>Size</th><th>Cost</th><th>Price</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 };
 
@@ -1980,140 +2185,168 @@ const PRODUCT = {
    SALE MODULE
 ════════════════════════════════ */
 const SALE = {
+
+  // ── OPEN FORM ────────────────────────────────────────────
   openForm(editId) {
     const s = editId ? DB.sales.find(x => x.id === editId) : null;
+    document.getElementById('m-sale-ttl').textContent = s ? 'Edit Sale' : 'New Sale';
+    document.getElementById('s-save-btn').textContent = s ? 'Update Sale' : 'Save Sale';
+    document.getElementById('s-eid').value  = s ? s.id   : '';
+    document.getElementById('s-date').value = s ? s.date : UTIL.today();
 
-    // Populate customer dropdown
+    // Customers
     const sc = document.getElementById('s-cust');
     sc.innerHTML = '<option value="">Select customer…</option>' +
-      DB.customers.map(c => `<option value="${c.id}">${UTIL.esc(c.name)} · ${UTIL.esc(c.phone)}</option>`).join('');
+      DB.customers.map(c =>
+        `<option value="${c.id}" ${s&&s.cid===c.id?'selected':''}>${UTIL.esc(c.name)} · ${UTIL.esc(c.phone)}</option>`
+      ).join('');
 
-    // Populate product dropdown
+    // Products
     const sp = document.getElementById('s-prod');
     sp.innerHTML = '<option value="">Select product…</option>' +
-      DB.products.map(p => `<option value="${p.id}">${UTIL.esc(p.name)} — ${UTIL.money(p.price)} [${p.stock} left]</option>`).join('');
+      DB.products.map(p =>
+        `<option value="${p.id}" ${s&&s.pid===p.id?'selected':''}>${UTIL.esc(p.name)} [${p.stock} left]</option>`
+      ).join('');
+    if (s && s.pid) this.onProductChange();
 
-    // Fill fields
-    document.getElementById('s-eid').value   = s ? s.id : '';
-    document.getElementById('s-date').value  = s ? s.date  : UTIL.today();
-    document.getElementById('s-qty').value   = s ? s.qty   : '1';
-    document.getElementById('s-price').value = s ? s.price : '';
-    document.getElementById('s-paid').value  = s ? s.paid  : '0';
-    document.getElementById('s-notes').value = s ? (s.notes||'') : '';
-    document.getElementById('s-total').textContent   = s ? s.total.toLocaleString('en-IN',{minimumFractionDigits:2}) : '0.00';
-    document.getElementById('s-pending').textContent = s ? s.pending.toLocaleString('en-IN',{minimumFractionDigits:2}) : '0.00';
+    document.getElementById('s-qty').value   = s ? s.qty : '1';
+    document.getElementById('s-price').value = s ? (s.sell_price || s.price || '') : '';
+    document.getElementById('s-paid').value  = s ? (s.paid || 0) : '0';
+    document.getElementById('s-notes').value = s ? (s.notes || '') : '';
+    document.getElementById('s-method').value = s ? (s.method || 'Cash') : 'Cash';
+    document.getElementById('s-total').textContent   = '0.00';
+    document.getElementById('s-pending').textContent = '0.00';
     document.getElementById('sale-stock-warn').classList.remove('show');
-
-    // Set customer and product selects to current values when editing
-    if (s) {
-      document.getElementById('s-cust').value = s.cid;
-      document.getElementById('s-prod').value = s.pid;
-    }
-
-    // Update title and button
-    document.getElementById('m-sale-ttl').textContent  = s ? 'Edit Sale' : 'New Sale';
-    document.getElementById('s-save-btn').textContent  = s ? 'Update Sale' : 'Save Sale';
-
+    this.calc();
     UI.openModal('m-sale');
     setTimeout(() => document.getElementById('s-cust').focus(), 100);
   },
 
   onProductChange() {
-    const pid = parseInt(document.getElementById('s-prod').value);
-    const p   = DB.products.find(x => x.id === pid);
-    if (p) { document.getElementById('s-price').value = p.price; this.calc(); }
+    const pid   = parseInt(document.getElementById('s-prod').value);
+    const p     = DB.products.find(x => x.id === pid);
+    if (p) document.getElementById('s-price').value = p.price || '';
+    // Populate batches
+    const batches = (DB.productBatches || []).filter(b => b.productId === pid && b.stock > 0)
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+    const bEl = document.getElementById('s-batch');
+    bEl.innerHTML = '<option value="">— Use default product price —</option>' +
+      batches.map(b =>
+        `<option value="${b.id}">Lot ${UTIL.fmtDate(b.date)} — Cost: ${UTIL.money(b.cost_price)} | Sell: ${UTIL.money(b.sell_price)} [${b.stock} left]</option>`
+      ).join('');
+    this.calc();
   },
 
   calc() {
-    const qty     = parseFloat(document.getElementById('s-qty').value)   || 0;
-    const price   = parseFloat(document.getElementById('s-price').value) || 0;
-    const paid    = parseFloat(document.getElementById('s-paid').value)  || 0;
+    const qty  = parseFloat(document.getElementById('s-qty').value)   || 0;
+    const price= parseFloat(document.getElementById('s-price').value) || 0;
+    const paid = parseFloat(document.getElementById('s-paid').value)  || 0;
     const total   = qty * price;
     const pending = Math.max(0, total - paid);
-    document.getElementById('s-total').textContent   = total.toLocaleString('en-IN', { minimumFractionDigits:2, maximumFractionDigits:2 });
-    document.getElementById('s-pending').textContent = pending.toLocaleString('en-IN', { minimumFractionDigits:2, maximumFractionDigits:2 });
-
+    document.getElementById('s-total').textContent   = total.toLocaleString('en-IN', {minimumFractionDigits:2});
+    document.getElementById('s-pending').textContent = pending.toLocaleString('en-IN', {minimumFractionDigits:2});
     // Stock warning
-    const pid  = parseInt(document.getElementById('s-prod').value);
-    const prod = DB.products.find(x => x.id === pid);
-    const warn = document.getElementById('sale-stock-warn');
-    if (prod && qty > prod.stock) {
-      warn.textContent = `⚠ Only ${prod.stock} unit${prod.stock !== 1 ? 's' : ''} in stock`;
-      warn.classList.add('show');
+    const batchId = parseInt(document.getElementById('s-batch').value);
+    const pid     = parseInt(document.getElementById('s-prod').value);
+    const warn    = document.getElementById('sale-stock-warn');
+    if (batchId) {
+      const batch = (DB.productBatches || []).find(b => b.id === batchId);
+      if (batch && qty > batch.stock) {
+        warn.textContent = `⚠ Batch only has ${batch.stock} units left`;
+        warn.classList.add('show');
+      } else warn.classList.remove('show');
     } else {
-      warn.classList.remove('show');
+      const prod = DB.products.find(x => x.id === pid);
+      if (prod && qty > prod.stock) {
+        warn.textContent = `⚠ Only ${prod.stock} unit${prod.stock !== 1 ? 's' : ''} in stock`;
+        warn.classList.add('show');
+      } else warn.classList.remove('show');
     }
   },
 
   save() {
-    const cid   = parseInt(document.getElementById('s-cust').value);
-    const pid   = parseInt(document.getElementById('s-prod').value);
-    const qty   = parseInt(document.getElementById('s-qty').value)    || 0;
-    const price = parseFloat(document.getElementById('s-price').value) || 0;
-    const paid  = parseFloat(document.getElementById('s-paid').value)  || 0;
-    const sdate = document.getElementById('s-date').value;
-
-    if (!cid)      { TOAST.show('Select a customer', 'err'); return; }
-    if (!pid)      { TOAST.show('Select a product', 'err'); return; }
-    if (!sdate)    { TOAST.show('Select a date', 'err'); return; }
-    if (qty <= 0)  { TOAST.show('Quantity must be at least 1', 'err'); return; }
-    if (price <= 0){ TOAST.show('Enter a valid price greater than 0', 'err'); return; }
-    if (paid < 0)  { TOAST.show('Amount paid cannot be negative', 'err'); return; }
-    if (paid > qty * price) { TOAST.show('Amount paid cannot exceed total', 'err'); return; }
-
-    const prod = DB.products.find(x => x.id === pid);
-    if (prod && prod.stock < qty) {
-      TOAST.show(`Not enough stock available (${prod.stock} left)`, 'err');
-      return;
-    }
-
-    const total   = qty * price;
-    const pending = Math.max(0, total - paid);
+    const cid     = parseInt(document.getElementById('s-cust').value);
+    const pid     = parseInt(document.getElementById('s-prod').value);
+    const qty     = parseInt(document.getElementById('s-qty').value)     || 0;
+    const price   = parseFloat(document.getElementById('s-price').value) || 0;
+    const paid    = parseFloat(document.getElementById('s-paid').value)  || 0;
+    const sdate   = document.getElementById('s-date').value;
+    const batchId = parseInt(document.getElementById('s-batch').value)   || null;
     const method  = document.getElementById('s-method').value;
     const notes   = document.getElementById('s-notes').value.trim();
     const eid     = document.getElementById('s-eid').value;
 
+    if (!cid)    { TOAST.show('Select a customer', 'err'); return; }
+    if (!pid)    { TOAST.show('Select a product',  'err'); return; }
+    if (!sdate)  { TOAST.show('Select a date',     'err'); return; }
+    if (qty <= 0){ TOAST.show('Quantity must be at least 1', 'err'); return; }
+    if (price<=0){ TOAST.show('Enter a valid price', 'err'); return; }
+    if (paid < 0){ TOAST.show('Paid cannot be negative', 'err'); return; }
+    if (paid > qty * price){ TOAST.show('Paid cannot exceed total', 'err'); return; }
+
+    const prod      = DB.products.find(x => x.id === pid);
+    const batch     = batchId ? (DB.productBatches || []).find(b => b.id === batchId) : null;
+    const costPrice = batch ? batch.cost_price : (prod?.cost || 0);
+    const sellPrice = price;
+    const total     = qty * sellPrice;
+    const pending   = Math.max(0, total - paid);
+    const profit    = (sellPrice - costPrice) * qty;
+
+    // Stock check
+    if (batch) {
+      if (batch.stock < qty) { TOAST.show(`Batch only has ${batch.stock} units`, 'err'); return; }
+    } else if (prod && prod.stock < qty) {
+      TOAST.show(`Not enough stock (${prod.stock} left)`, 'err'); return;
+    }
+
     if (eid) {
-      // ── EDIT MODE — password required ─────────────────────
+      // EDIT MODE — password required
       PWDMODAL.ask('Edit Sale', 'Enter password to save changes to this sale.').then(ok => {
         if (!ok) return;
-        const existing = DB.sales.find(x => x.id === parseInt(eid));
-        if (existing) {
-          // Restore stock from old qty, apply new qty
-          const oldProd = DB.products.find(x => x.id === existing.pid);
-          if (oldProd) oldProd.stock += existing.qty; // restore old stock
-          if (prod)    prod.stock    -= qty;           // deduct new qty
-
-          existing.date    = sdate;
-          existing.cid     = cid;
-          existing.pid     = pid;
-          existing.qty     = qty;
-          existing.price   = price;
-          existing.total   = total;
-          existing.paid    = paid;
-          existing.pending = pending;
-          existing.method  = method;
-          existing.notes   = notes;
+        const ex = DB.sales.find(x => x.id === parseInt(eid));
+        if (ex) {
+          // Restore old stock
+          if (ex.batchId) {
+            const ob = (DB.productBatches || []).find(b => b.id === ex.batchId);
+            if (ob) ob.stock += ex.qty;
+          } else {
+            const op = DB.products.find(x => x.id === ex.pid);
+            if (op) op.stock += ex.qty;
+          }
+          // Deduct new stock
+          if (batch) batch.stock -= qty;
+          else if (prod) prod.stock -= qty;
+          Object.assign(ex, {
+            date:sdate, cid, pid, qty,
+            sell_price:sellPrice, price:sellPrice,
+            cost_price:costPrice, cost:costPrice,
+            batchId, total, paid, pending, profit,
+            method, notes, status:'completed'
+          });
         }
         DATABASE.save();
         UI.closeModal('m-sale');
         SALE.render(DB.sales);
         DASHBOARD.render();
         UI.updatePayBadge();
-        TOAST.show('Sale updated successfully', 'ok');
+        TOAST.show('Sale updated', 'ok');
       });
     } else {
-      // ── NEW SALE ───────────────────────────────────────────
-      const inv = UTIL.invNum();
-      if (prod) prod.stock -= qty;
-      // Store name snapshots so deleted customers/products still show in history
+      // NEW SALE
+      if (batch) batch.stock -= qty;
+      else if (prod) prod.stock -= qty;
+      const inv      = UTIL.invNum();
       const custName = DB.customers.find(x => x.id === cid)?.name || '';
-      const prodName = DB.products.find(x => x.id === pid)?.name  || '';
+      const prodName = prod?.name || '';
       DB.sales.push({
-        id: DB._sid++, inv, date: sdate, cid, pid, qty, price, total, paid, pending,
-        method, notes,
-        cname: custName,  // snapshot: shows even if customer is deleted
-        pname: prodName   // snapshot: shows even if product is deleted
+        id: DB._sid++, inv, date: sdate, cid, pid, qty,
+        sell_price: sellPrice, price: sellPrice,
+        cost_price: costPrice, cost: costPrice,
+        guarantee_mm: 0, used_mm: null, rate_per_mm: 0,
+        isBroken: false,
+        batchId, total, paid, pending, profit,
+        status: 'completed',
+        method, notes, cname: custName, pname: prodName
       });
       DATABASE.save();
       UI.closeModal('m-sale');
@@ -2124,65 +2357,411 @@ const SALE = {
     }
   },
 
+  // ── BROKEN (Guarantee Adjustment) ─────────────────────────
+  openBroken(sid) {
+    const s = DB.sales.find(x => x.id === sid);
+    if (!s) return;
+    document.getElementById('brk-sid').value     = sid;
+    document.getElementById('brk-sell').textContent = UTIL.money(s.sell_price || s.price || 0);
+    document.getElementById('brk-guarantee').value  = s.guarantee_mm || '';
+    document.getElementById('brk-used').value       = s.used_mm     || '';
+    document.getElementById('brk-preview').innerHTML = '&mdash;';
+    UI.openModal('m-broken');
+    setTimeout(() => document.getElementById('brk-guarantee').focus(), 120);
+  },
+
+  calcBrokenPreview() {
+    const sid   = parseInt(document.getElementById('brk-sid').value);
+    const s     = DB.sales.find(x => x.id === sid);
+    if (!s) return;
+    const gmm   = parseFloat(document.getElementById('brk-guarantee').value) || 0;
+    const used  = parseFloat(document.getElementById('brk-used').value)      || 0;
+    const sell  = s.sell_price || s.price || 0;
+    if (!gmm || !used) {
+      document.getElementById('brk-preview').innerHTML = '&mdash;';
+      return;
+    }
+    const rate     = sell / gmm;
+    const newTotal = used <= gmm ? Math.round(used * rate * 100) / 100 : sell;
+    const cost     = (s.cost_price || s.cost || 0) * (s.qty || 1);
+    const linkedExp = (DB.expenses || []).filter(e => {
+      return (e.sids || (e.sid ? [e.sid] : [])).includes(s.id);
+    }).reduce((a, e) => a + (e.amount || 0), 0);
+    const profit   = newTotal - cost - linkedExp;
+    const alreadyPaid = s.paid || 0;
+    const refund      = Math.max(0, alreadyPaid - newTotal);
+    const el = document.getElementById('brk-preview');
+    el.innerHTML =
+      `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:8px">
+        <div>
+          <div style="font-size:10px;color:var(--text-3);margin-bottom:2px">Old Total</div>
+          <div class="dim mono" style="font-weight:600;text-decoration:line-through">${UTIL.money(s.total)}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text-3);margin-bottom:2px">New Total</div>
+          <div class="gold mono" style="font-size:17px;font-weight:700">${UTIL.money(newTotal)}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text-3);margin-bottom:2px">Rate / MM</div>
+          <div style="font-size:12.5px;font-weight:600">${UTIL.money(rate)}/mm</div>
+        </div>
+      </div>
+      ${refund > 0
+        ? `<div style="background:rgba(229,62,90,.12);border:1px solid rgba(229,62,90,.3);border-radius:6px;padding:10px 12px;margin-bottom:8px">
+             <div style="font-size:10px;color:var(--red);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px">⚠ Refund Required</div>
+             <div style="display:flex;justify-content:space-between;align-items:center">
+               <span style="font-size:12.5px">Customer paid <strong>${UTIL.money(alreadyPaid)}</strong> but new total is <strong>${UTIL.money(newTotal)}</strong></span>
+               <span class="red mono" style="font-size:18px;font-weight:800">${UTIL.money(refund)}</span>
+             </div>
+             <div style="font-size:11px;color:var(--red);margin-top:3px">Return ${UTIL.money(refund)} to customer</div>
+           </div>`
+        : ''}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <div style="font-size:10px;color:var(--text-3);margin-bottom:2px">Customer Paid</div>
+          <div class="green mono" style="font-weight:600">${UTIL.money(alreadyPaid)}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text-3);margin-bottom:2px">Profit</div>
+          <div class="${profit >= 0 ? 'green' : 'red'}" style="font-size:14px;font-weight:700">${UTIL.money(profit)}</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text-3);margin-top:7px">
+        ${used <= gmm
+          ? `${used} of ${gmm} mm used (${Math.round(used/gmm*100)}%)`
+          : `Used (${used}mm) exceeds guarantee (${gmm}mm) — full sell price applies`}
+      </div>`;
+  },
+
+  saveBroken() {
+    const sid  = parseInt(document.getElementById('brk-sid').value);
+    const gmm  = parseFloat(document.getElementById('brk-guarantee').value) || 0;
+    const used = parseFloat(document.getElementById('brk-used').value)      || 0;
+    if (!sid)   { TOAST.show('No sale selected', 'err'); return; }
+    if (!gmm)   { TOAST.show('Enter guarantee MM', 'err'); return; }
+    if (!used)  { TOAST.show('Enter used MM', 'err'); return; }
+    PWDMODAL.ask('Confirm Broken Adjustment', 'Enter admin password to apply guarantee adjustment.').then(ok => {
+      if (!ok) return;
+      const s    = DB.sales.find(x => x.id === sid);
+      if (!s) { TOAST.show('Sale not found', 'err'); return; }
+      const sell     = s.sell_price || s.price || 0;
+      const rate     = sell / gmm;
+      const newTotal = used <= gmm ? Math.round(used * rate * 100) / 100 : sell;
+      const cost     = (s.cost_price || s.cost || 0) * (s.qty || 1);
+      const linkedExp = (DB.expenses || []).filter(e => {
+        return (e.sids || (e.sid ? [e.sid] : [])).includes(s.id);
+      }).reduce((a, e) => a + (e.amount || 0), 0);
+      const alreadyPaid = s.paid || 0;
+      const refundAmt   = Math.max(0, alreadyPaid - newTotal); // customer overpaid
+      s.guarantee_mm = gmm;
+      s.used_mm      = used;
+      s.rate_per_mm  = rate;
+      s.total        = newTotal;
+      s.paid         = Math.min(alreadyPaid, newTotal); // paid can't exceed new total
+      s.pending      = 0;                               // nothing more to collect
+      s.refund       = refundAmt;                       // amount to return to customer
+      s.profit       = newTotal - cost - linkedExp;
+      s.isBroken     = true;
+      s.status       = 'completed';
+      DATABASE.save();
+      UI.closeModal('m-broken');
+      SALE.render(DB.sales);
+      DASHBOARD.render();
+      UI.updatePayBadge();
+      const msg = refundAmt > 0
+        ? 'Broken — New Total: ' + UTIL.money(newTotal) + ' | Refund to customer: ' + UTIL.money(refundAmt)
+        : 'Broken — New Total: ' + UTIL.money(newTotal);
+      TOAST.show(msg, 'ok');
+    });
+  },
+
+  // ── VIEW SALE DETAIL PAGE ─────────────────────────────────
+  viewDetail(sid) {
+    UI._curDetailSid = sid;
+    SALE.renderDetail(sid);
+    UI.nav('sale-detail', null);
+  },
+
+  renderDetail(sid) {
+    const el = document.getElementById('sale-detail-body');
+    if (!el) return;
+    const s = DB.sales.find(x => x.id === sid);
+    if (!s) { el.innerHTML = '<p style="padding:20px;color:var(--text-3)">Sale not found.</p>'; return; }
+
+    const c      = DB.customers.find(x => x.id === s.cid);
+    const p      = DB.products.find(x => x.id === s.pid);
+    const batch  = s.batchId ? (DB.productBatches || []).find(b => b.id === s.batchId) : null;
+    const cName  = c?.name  || s.cname || '—';
+    const pName  = p?.name  || s.pname || '—';
+    const costPU = batch ? batch.cost_price : (s.cost_price || s.cost || 0);
+    const totalCost = costPU * (s.qty || 1);
+
+    // Payments linked to this sale
+    const salePayments  = (DB.payments || []).filter(px => px.sid === s.id);
+    const totalPaid     = s.paid || 0;
+
+    // Expenses linked to this sale
+    const saleExpenses  = (DB.expenses || []).filter(e =>
+      (e.sids || (e.sid ? [e.sid] : [])).includes(s.id)
+    );
+    const totalExpenses = saleExpenses.reduce((a, e) => a + (e.amount || 0), 0);
+
+    // Profit = sale_total - cost - expenses
+    const trueProfit = s.total - totalCost - totalExpenses;
+
+    const payRows = salePayments.length
+      ? salePayments.map(px =>
+          `<tr>
+            <td class="dim">${UTIL.fmtDate(px.date)}</td>
+            <td><span class="badge bg-gray" style="font-size:10px">${UTIL.esc(px.method || '—')}</span></td>
+            <td class="green mono fw7">${UTIL.money(px.amount)}</td>
+            <td class="dim" style="font-size:11.5px">${UTIL.esc(px.note || '—')}</td>
+          </tr>`
+        ).join('')
+      : '<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:14px">No payments recorded yet</td></tr>';
+
+    const expRows = saleExpenses.length
+      ? saleExpenses.map(e =>
+          `<tr>
+            <td class="dim">${UTIL.fmtDate(e.date)}</td>
+            <td><span class="badge bg-gray" style="font-size:10px">${UTIL.esc(e.category)}</span></td>
+            <td class="red mono fw7">${UTIL.money(e.amount)}</td>
+            <td class="dim" style="font-size:11.5px">${UTIL.esc(e.note || '—')}</td>
+          </tr>`
+        ).join('')
+      : '<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:14px">No expenses linked — select this invoice in Expenses to link</td></tr>';
+
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--line);flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="UI.nav('sales',null)">&#8592; Sales</button>
+        <span class="mono" style="font-size:15px;font-weight:700">${UTIL.esc(s.inv)}</span>
+        ${s.isBroken ? '<span class="badge bg-red" style="font-size:10px">&#128308; Broken</span>' : ''}
+        ${s.status==='completed' ? '<span class="badge bg-green" style="font-size:10px">&#10003; Completed</span>' : '<span class="badge bg-gold" style="font-size:10px">Running</span>'}
+        <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="INVOICE.open(${s.id})">Invoice</button>
+          <button class="btn btn-danger btn-sm" onclick="SALE.openBroken(${s.id})">&#128308; Broken</button>
+          ${!s.isBroken && s.pending > 0 ? `<button class="btn btn-gold btn-sm" onclick="PAYMENT.openForSale(${s.id})">+ Collect</button>` : ''}
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:12px">
+
+        <!-- Sale Info -->
+        <div class="card">
+          <div class="card-head"><div class="card-title">&#128203; Sale Info</div></div>
+          <div style="padding:0 16px 14px">
+            <table style="width:100%;font-size:13px;border-collapse:collapse">
+              ${[
+                ['Invoice',          `<span class="mono fw7">${UTIL.esc(s.inv)}</span>`],
+                ['Date',             UTIL.fmtDate(s.date)],
+                ['Customer',         `<strong>${UTIL.esc(cName)}</strong>`],
+                ['Product',          UTIL.esc(pName)],
+                ['Quantity',         s.qty],
+                ['Sell Price',       `<span class="gold fw7">${UTIL.money(s.sell_price || s.price)}</span>`],
+                ['Batch Cost / unit',`<span class="dim">${UTIL.money(costPU)}</span>`],
+                ['Total Cost',       `<span class="dim">${UTIL.money(totalCost)}</span>`],
+                s.isBroken ? ['Guarantee MM', `<span class="gold">${s.guarantee_mm} mm</span>`]        : null,
+                s.isBroken ? ['Used MM',      `<span class="red fw7">${s.used_mm} mm</span>`]          : null,
+                s.isBroken ? ['Rate / MM',    UTIL.money(s.rate_per_mm) + ' / mm']                     : null,
+                ['Final Amount',     `<span class="gold" style="font-size:15px;font-weight:800">${UTIL.money(s.total)}</span>`],
+                ['Method',           `<span class="badge bg-gray" style="font-size:10px">${UTIL.esc(s.method||'—')}</span>`],
+                s.notes ? ['Notes', `<span class="dim">${UTIL.esc(s.notes)}</span>`] : null,
+              ].filter(Boolean).map(([k, v]) =>
+                `<tr>
+                  <td style="padding:6px 0;color:var(--text-3);width:44%;border-bottom:1px solid var(--line)">${k}</td>
+                  <td style="padding:6px 0;border-bottom:1px solid var(--line)">${v}</td>
+                </tr>`
+              ).join('')}
+            </table>
+          </div>
+        </div>
+
+        <!-- Financial Summary -->
+        <div class="card">
+          <div class="card-head"><div class="card-title">&#128176; Financial Summary</div></div>
+          <div style="padding:0 16px 14px;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--gold-f);border-radius:var(--r1)">
+              <span style="font-size:13px">Final Sale Amount</span>
+              <span class="gold mono fw7" style="font-size:15px">${UTIL.money(s.total)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:8px 12px;background:rgba(31,184,90,.07);border-radius:var(--r1)">
+              <span style="font-size:13px">Total Payments Received</span>
+              <span class="green mono fw7">${UTIL.money(totalPaid)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:8px 12px;background:rgba(229,62,90,.07);border-radius:var(--r1)">
+              <span style="font-size:13px">Balance Due</span>
+              <span class="${s.pending > 0 ? 'red' : 'green'} mono fw7">${UTIL.money(s.pending || 0)}</span>
+            </div>
+            ${(s.refund||0) > 0 ? `
+            <div style="display:flex;justify-content:space-between;padding:10px 12px;background:rgba(229,62,90,.12);border:1px solid rgba(229,62,90,.3);border-radius:var(--r2)">
+              <div>
+                <div style="font-size:13px;font-weight:700;color:var(--red)">↩ Refund to Customer</div>
+                <div style="font-size:11px;color:var(--red);margin-top:2px">Customer overpaid before bit broke</div>
+              </div>
+              <span class="red mono fw7" style="font-size:16px;align-self:center">${UTIL.money(s.refund)}</span>
+            </div>` : ''}
+            <div style="height:1px;background:var(--line);margin:2px 0"></div>
+            <div style="display:flex;justify-content:space-between;padding:6px 12px">
+              <span style="font-size:12px;color:var(--text-2)">Sale Amount</span>
+              <span class="mono" style="font-size:12px">${UTIL.money(s.total)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:6px 12px">
+              <span style="font-size:12px;color:var(--text-2)">&minus; Batch Cost</span>
+              <span class="dim mono" style="font-size:12px">${UTIL.money(totalCost)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:6px 12px">
+              <span style="font-size:12px;color:var(--text-2)">&minus; Expenses</span>
+              <span class="red mono" style="font-size:12px">${UTIL.money(totalExpenses)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:10px 12px;background:var(--ink-3);border:2px solid ${trueProfit >= 0 ? 'rgba(31,184,90,.35)' : 'rgba(229,62,90,.35)'};border-radius:var(--r2)">
+              <div>
+                <div style="font-size:14px;font-weight:700">True Profit</div>
+                <div style="font-size:10px;color:var(--text-3);margin-top:2px">sale &minus; cost &minus; expenses</div>
+              </div>
+              <span class="${trueProfit >= 0 ? 'green' : 'red'} mono" style="font-size:20px;font-weight:800;align-self:center">${UTIL.money(trueProfit)}</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Payment History -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-head">
+          <div class="card-title">&#128179; Payments Received</div>
+          ${s.pending > 0 ? `<button class="btn btn-gold btn-xs" onclick="PAYMENT.openForSale(${s.id})">+ Collect</button>` : '<span class="badge bg-green" style="font-size:10px">&#10003; Fully Paid</span>'}
+        </div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Date</th><th>Method</th><th>Amount</th><th>Note</th></tr></thead>
+          <tbody>${payRows}</tbody>
+        </table></div>
+      </div>
+
+      <!-- Expense History -->
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">&#128184; Expenses for this Sale</div>
+          <button class="btn btn-ghost btn-xs" onclick="EXPENSE.openForm()">+ Add Expense</button>
+        </div>
+        <div style="font-size:11.5px;color:var(--text-3);padding:6px 16px 0">
+          To link an expense, select <strong>${UTIL.esc(s.inv)}</strong> in the Linked Sales field when adding an expense.
+        </div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Date</th><th>Category</th><th>Amount</th><th>Description</th></tr></thead>
+          <tbody>${expRows}</tbody>
+        </table></div>
+      </div>
+    `;
+  },
+
+  // ── LEGACY: openUpdateMM / saveUsedMM (kept for any running MM sales) ──
+  openUpdateMM(sid) {
+    const s = DB.sales.find(x => x.id === sid);
+    if (!s) return;
+    document.getElementById('mm-sale-info').textContent =
+      s.inv + ' — ' + (s.cname || '?') + ' | Sell: ' + UTIL.money(s.sell_price || s.price);
+    document.getElementById('mm-sid').value  = sid;
+    document.getElementById('mm-used').value = s.used_mm || '';
+    document.getElementById('mm-preview').textContent = '—';
+    UI.openModal('m-update-mm');
+    setTimeout(() => document.getElementById('mm-used').focus(), 100);
+  },
+
+  calcMMPreview() {
+    const sid  = parseInt(document.getElementById('mm-sid').value);
+    const s    = DB.sales.find(x => x.id === sid);
+    if (!s) return;
+    const used = parseFloat(document.getElementById('mm-used').value) || 0;
+    const total = UTIL.calcMM(s.sell_price || s.price, s.guarantee_mm, used);
+    document.getElementById('mm-preview').textContent = 'Total: ' + UTIL.money(total);
+  },
+
+  saveUsedMM() {
+    const sid  = parseInt(document.getElementById('mm-sid').value);
+    const used = parseFloat(document.getElementById('mm-used').value) || 0;
+    if (used <= 0) { TOAST.show('Enter used MM', 'err'); return; }
+    const s = DB.sales.find(x => x.id === sid);
+    if (!s) return;
+    const total   = UTIL.calcMM(s.sell_price || s.price, s.guarantee_mm, used);
+    const cost    = (s.cost_price || s.cost || 0) * s.qty;
+    s.used_mm  = used;
+    s.total    = total;
+    s.pending  = Math.max(0, total - s.paid);
+    s.profit   = total - cost;
+    s.status   = 'completed';
+    DATABASE.save();
+    UI.closeModal('m-update-mm');
+    this.render(DB.sales);
+    DASHBOARD.render();
+    UI.updatePayBadge();
+    TOAST.show('MM updated — Total: ' + UTIL.money(total), 'ok');
+  },
+
   filter(q) {
     const lq = q.toLowerCase().trim();
-    this.render(lq
-      ? DB.sales.filter(s => {
-          const c = DB.customers.find(x => x.id === s.cid);
-          return s.inv.toLowerCase().includes(lq) || (c?.name || '').toLowerCase().includes(lq);
-        })
-      : DB.sales);
+    this.render(lq ? DB.sales.filter(s => {
+      if (s.isOpeningBalance) return false;
+      const c = DB.customers.find(x => x.id === s.cid);
+      return s.inv.toLowerCase().includes(lq) || (c?.name || s.cname || '').toLowerCase().includes(lq);
+    }) : DB.sales);
   },
 
   render(list) {
     const wrap = document.getElementById('sales-tbl');
-    if (!list.length) {
+    if (!list || !list.length) {
       wrap.innerHTML = UI.empty('📋', 'No sales recorded', 'Record your first sale to get started.', '+ New Sale', 'SALE.openForm()');
       return;
     }
-    const sorted = [...list].sort((a, b) => a.id - b.id); // oldest first: UBE-001 at top
-    const mCol = { Cash: 'bg-green', UPI: 'bg-blue', 'Bank Transfer': 'bg-blue', Cheque: 'bg-gray', Credit: 'bg-gold' };
+    const sorted = [...list].filter(s => !s.isOpeningBalance).sort((a, b) => a.id - b.id);
+    const mCol = { Cash:'bg-green', UPI:'bg-blue', 'Bank Transfer':'bg-blue', Cheque:'bg-gray', Credit:'bg-gold', 'Prior Balance':'bg-gray' };
     const rows = sorted.map(s => {
-      const c = DB.customers.find(x => x.id === s.cid);
-      const p = DB.products.find(x => x.id === s.pid);
-      // Use stored name snapshot if customer/product was deleted
+      const c     = DB.customers.find(x => x.id === s.cid);
       const cName = c?.name || s.cname || '—';
-      const pName = p?.name || s.pname || '—';
+      const pName = DB.products.find(x => x.id === s.pid)?.name || s.pname || '—';
+      const isRunning = s.status === 'running';
       return `<tr>
-        <td class="mono">${UTIL.esc(s.inv)}</td>
+        <td class="mono">${UTIL.esc(s.inv)}${s.isBroken ? ' <span class="badge bg-red" style="font-size:8px">BROKEN</span>' : ''}</td>
         <td class="dim">${UTIL.fmtDate(s.date)}</td>
-        <td><strong>${UTIL.esc(cName)}</strong>${!c ? '<span style="font-size:10px;color:var(--text-3);margin-left:4px">(deleted)</span>' : ''}</td>
-        <td class="dim" style="font-size:12.5px">${UTIL.esc(pName)}</td>
+        <td><strong>${UTIL.esc(cName)}</strong></td>
+        <td style="font-size:12.5px">${UTIL.esc(pName)}</td>
         <td class="mono dim">${s.qty}</td>
         <td class="gold">${UTIL.money(s.total)}</td>
-        <td class="${s.pending > 0 ? 'red' : 'green'}">${UTIL.money(s.pending)}</td>
-        <td><span class="badge ${mCol[s.method]||'bg-gray'}">${UTIL.esc(s.method)}</span></td>
+        <td class="${(s.refund||0)>0?'gold':s.pending>0?'red':'green'}">
+          ${(s.refund||0)>0
+            ? '<span style="color:var(--gold-l)">↩ Return ' + UTIL.money(s.refund) + '</span>'
+            : UTIL.money(s.pending||0)}
+        </td>
+        <td><span class="badge ${mCol[s.method] || 'bg-gray'}">${UTIL.esc(s.method)}</span></td>
         <td class="acts"><div class="flex-g">
-          <button class="btn btn-ghost btn-xs" onclick="INVOICE.open(${Number(s.id)})">Invoice</button>
-          ${s.pending > 0 ? `<button class="btn btn-gold btn-xs" onclick="PAYMENT.openForSale(${Number(s.id)})">Pay</button>` : ''}
+          <button class="btn btn-ghost btn-xs" onclick="SALE.viewDetail(${s.id})">View</button>
+          <button class="btn btn-ghost btn-xs" onclick="INVOICE.open(${s.id})">Invoice</button>
+          <button class="btn btn-danger btn-xs" onclick="SALE.openBroken(${s.id})">Broken</button>
+          ${s.pending > 0 ? `<button class="btn btn-gold btn-xs" onclick="PAYMENT.openForSale(${s.id})">Pay</button>` : ''}
         </div></td>
       </tr>`;
     }).join('');
-    wrap.innerHTML = `<table><thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Pending</th><th>Method</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>`;
+    wrap.innerHTML = `<table><thead><tr>
+      <th>Invoice</th><th>Date</th><th>Customer</th><th>Product</th>
+      <th>Qty</th><th>Total</th><th>Pending</th><th>Method</th><th>Actions</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
   }
 };
 
-/* ════════════════════════════════
-   PAYMENT MODULE
-════════════════════════════════ */
+
 const PAYMENT = {
   _cid: null,
-  _sid: null, // specific sale being paid (null = distribute across all pending)
+  _sid: null,
 
   openForCustomer(cid) {
     this._cid = cid;
-    this._sid = null; // no specific sale — distribute across all pending
+    this._sid = null;
     const c       = DB.customers.find(x => x.id === cid);
     const pending = UTIL.custPending(cid);
     document.getElementById('pay-cname').textContent     = c?.name || '—';
     document.getElementById('pay-pend-disp').textContent = UTIL.money(pending);
-    document.getElementById('pay-amt').value  = '';
-    document.getElementById('pay-note').value = '';
+    document.getElementById('pay-date').value  = UTIL.today();
+    document.getElementById('pay-amt').value   = '';
+    document.getElementById('pay-note').value  = '';
     UI.openModal('m-payment');
     setTimeout(() => document.getElementById('pay-amt').focus(), 100);
   },
@@ -2190,27 +2769,29 @@ const PAYMENT = {
   openForSale(sid) {
     const s = DB.sales.find(x => x.id === sid);
     if (!s) return;
-    this._cid = s.cid;
-    this._sid = sid; // link payment to this specific sale
+    this._cid = s.cid; this._sid = sid;
     const c = DB.customers.find(x => x.id === s.cid);
-    document.getElementById('pay-cname').textContent     = (c?.name || '—') + ' · ' + s.inv;
+    document.getElementById('pay-cname').textContent     = (c?.name||'—') + ' · ' + s.inv;
     document.getElementById('pay-pend-disp').textContent = UTIL.money(s.pending);
-    document.getElementById('pay-amt').value  = '';
-    document.getElementById('pay-note').value = '';
+    document.getElementById('pay-date').value  = UTIL.today();
+    document.getElementById('pay-amt').value   = '';
+    document.getElementById('pay-note').value  = '';
     UI.openModal('m-payment');
     setTimeout(() => document.getElementById('pay-amt').focus(), 100);
   },
 
   save() {
-    const amt = parseFloat(document.getElementById('pay-amt').value) || 0;
-    if (amt <= 0) { TOAST.show('Enter a valid amount', 'err'); return; }
+    const amt    = parseFloat(document.getElementById('pay-amt').value) || 0;
+    const payDate = document.getElementById('pay-date').value || UTIL.today();
+    if (amt <= 0)  { TOAST.show('Enter a valid amount', 'err'); return; }
+    if (!payDate)  { TOAST.show('Select a date', 'err'); return; }
     if (!this._cid) return;
 
     const method = document.getElementById('pay-method').value;
     const note   = document.getElementById('pay-note').value.trim();
 
     if (this._sid) {
-      // ── SALE-SPECIFIC PAYMENT ────────────────────────────
+      // ── Specific sale payment ─────────────────────────────
       const sale = DB.sales.find(x => x.id === this._sid);
       if (!sale) { TOAST.show('Sale not found', 'err'); return; }
       if (amt > sale.pending) {
@@ -2220,37 +2801,36 @@ const PAYMENT = {
       }
       sale.paid    += amt;
       sale.pending  = Math.max(0, sale.total - sale.paid);
-      DB.payments.push({
-        id: Date.now(), cid: this._cid, sid: this._sid,
-        amount: amt, method, note, date: UTIL.today()
-      });
+      // ONE payment record linked to this sale
+      DB.payments.push({ id:Date.now(), cid:this._cid, sid:this._sid,
+        amount:amt, method, note, date:payDate });
+
     } else {
-      // ── DISTRIBUTE ACROSS ALL PENDING SALES ──────────────
+      // ── Lump sum — customer pays for all overdue ──────────
+      // Guard: cannot pay more than total pending
       const totalPending = UTIL.custPending(this._cid);
       if (amt > totalPending) {
         TOAST.show('Amount exceeds pending balance of ' + UTIL.money(totalPending), 'err');
         document.getElementById('pay-amt').value = totalPending.toFixed(2);
         return;
       }
+      // Distribute internally across sales (oldest first) — but record as ONE payment
       let rem = amt;
-      const affected = [];
-      DB.sales
-        .filter(s => s.cid === this._cid && s.pending > 0)
-        .sort((a, b) => new Date(a.date) - new Date(b.date))
-        .forEach(s => {
-          if (rem <= 0) return;
+      let primarySid = null;
+      DB.sales.filter(s=>s.cid===this._cid&&s.pending>0)
+        .sort((a,b)=>new Date(a.date)-new Date(b.date))
+        .forEach(s=>{
+          if (rem<=0) return;
+          if (!primarySid) primarySid = s.id; // link to first/oldest sale
           const pay = Math.min(rem, s.pending);
           s.paid    += pay;
           s.pending  = Math.max(0, s.total - s.paid);
-          rem        -= pay;
-          affected.push({ sid: s.id, pay });
+          rem       -= pay;
         });
-      // Record one payment entry per affected sale for clean history
-      affected.forEach(a => {
-        DB.payments.push({
-          id: Date.now() + a.sid, cid: this._cid, sid: a.sid,
-          amount: a.pay, method, note, date: UTIL.today()
-        });
+      // ONE single payment record — not split
+      DB.payments.push({ id:Date.now(), cid:this._cid, sid:primarySid,
+        amount:amt, method, note, date:payDate,
+        lumpSum:true  // flag: this was a lump-sum across multiple sales
       });
     }
 
@@ -2314,9 +2894,11 @@ const LEDGER = {
     if (!c) return;
 
     const ss      = DB.sales.filter(s => s.cid === cid).sort((a, b) => new Date(a.date) - new Date(b.date));
-    const total   = ss.reduce((a, s) => a + s.total,   0);
-    const paid    = ss.reduce((a, s) => a + s.paid,    0);
-    const pending = ss.reduce((a, s) => a + s.pending, 0);
+    const total   = ss.reduce((a, s) => a + s.total,          0);
+    const paid    = ss.reduce((a, s) => a + s.paid,           0);
+    const pending = ss.reduce((a, s) => a + (s.pending || 0), 0);
+    const refund  = ss.reduce((a, s) => a + (s.refund  || 0), 0);
+    const netBal  = pending - refund; // negative means we owe customer
     const txCount = ss.length;
     const payCount = DB.payments.filter(p => p.cid === cid).length;
     const firstDate = ss.length ? UTIL.fmtDate(ss[0].date) : '—';
@@ -2336,7 +2918,8 @@ const LEDGER = {
       <div class="ledger-stats">
         <div class="ls-box"><div class="ls-val" style="color:var(--gold-l)">${UTIL.money(total)}</div><div class="ls-lbl">Total Billed</div></div>
         <div class="ls-box"><div class="ls-val" style="color:var(--green-l)">${UTIL.money(paid)}</div><div class="ls-lbl">Total Paid</div></div>
-        <div class="ls-box"><div class="ls-val" style="color:${pending > 0 ? 'var(--red)' : 'var(--green-l)'}">${UTIL.money(pending)}</div><div class="ls-lbl">Balance Due</div></div>
+        <div class="ls-box"><div class="ls-val" style="color:${netBal > 0 ? 'var(--red)' : netBal < 0 ? 'var(--gold-l)' : 'var(--green-l)'}">${netBal < 0 ? '↩ ' + UTIL.money(Math.abs(netBal)) : UTIL.money(netBal)}</div><div class="ls-lbl">${netBal < 0 ? 'Refund Due' : 'Balance Due'}</div></div>
+        ${refund > 0 ? `<div class="ls-box"><div class="ls-val" style="color:var(--gold-l)">↩ ${UTIL.money(refund)}</div><div class="ls-lbl">To Refund</div></div>` : ''}
       </div>`;
 
     document.getElementById('ledger-pay-btn').onclick = () => PAYMENT.openForCustomer(cid);
@@ -2378,19 +2961,24 @@ const LEDGER = {
     let runBal = 0;
     const rows = ss.map(s => {
       const p = DB.products.find(x => x.id === s.pid);
-      const pName = p?.name || s.pname || '—';
-      runBal += s.total - s.paid;
+      const pN = p?.name||s.pname||'—';
+      // Correct balance: pending to collect minus any refund owed to customer
+      runBal += (s.pending || 0) - (s.refund || 0);
+      const balColor = runBal > 0 ? 'red' : runBal < 0 ? 'gold' : 'green';
+      const balText  = runBal < 0
+        ? '↩ ' + UTIL.money(Math.abs(runBal))  // refund due
+        : UTIL.money(runBal);
       return `<tr>
         <td class="dim">${UTIL.fmtDate(s.date)}</td>
-        <td class="mono">${UTIL.esc(s.inv)}</td>
-        <td style="font-size:13px">${UTIL.esc(pName)}</td>
+        <td class="mono">${UTIL.esc(s.inv)}${s.isBroken ? ' <span class="badge bg-red" style="font-size:8px">BROKEN</span>' : ''}</td>
+        <td style="font-size:13px">${UTIL.esc(pN)}</td>
         <td class="mono dim">${s.qty}</td>
         <td class="gold">${UTIL.money(s.total)}</td>
         <td class="green">${UTIL.money(s.paid)}</td>
-        <td class="${runBal > 0 ? 'red' : 'green'}">${UTIL.money(runBal)}</td>
+        <td class="${balColor}">${balText}</td>
         <td class="acts"><div class="flex-g">
-          <button class="btn btn-ghost btn-xs" onclick="LEDGER.openSaleTimeline(${s.id})">Timeline</button>
-          <button class="btn btn-ghost btn-xs" onclick="INVOICE.open(${s.id})">Invoice</button>
+          ${!s.isOpeningBalance ? `<button class="btn btn-ghost btn-xs" onclick="LEDGER.openSaleTimeline(${s.id})">Timeline</button>` : ''}
+          ${!s.isOpeningBalance ? `<button class="btn btn-ghost btn-xs" onclick="INVOICE.open(${s.id})">Invoice</button>` : `<span class="badge bg-gold" style="font-size:9px">OPENING BAL</span>`}
           ${s.pending > 0 ? `<button class="btn btn-gold btn-xs" onclick="PAYMENT.openForSale(${s.id})">Pay</button>` : '<span style="font-size:11px;color:var(--green-l)">✓ Paid</span>'}
         </div></td>
       </tr>`;
@@ -2404,140 +2992,173 @@ const LEDGER = {
   renderPaymentsTab(cid) {
     const el = document.getElementById('ledger-tbl');
     const mi = { Cash:'💵', UPI:'📱', 'Bank Transfer':'🏦', Cheque:'📄', default:'💳' };
-
-    // Build unified list:
-    // 1. Initial payments made at time of purchase (sale.paid > 0)
-    // 2. All subsequent payments from DB.payments
     const entries = [];
-
-    // --- Initial payments at purchase ---
-    DB.sales
-      .filter(s => s.cid === cid && s.paid > 0)
-      .forEach(s => {
-        entries.push({
-          id:      s.id,           // sale id as sort key
-          date:    s.date,
-          amount:  s.paid,
-          method:  s.method,
-          note:    'Received at purchase',
-          inv:     s.inv,
-          initial: true
-        });
-      });
-
-    // --- Subsequent payments ---
-    DB.payments
-      .filter(p => p.cid === cid)
-      .forEach(p => {
-        const ls = p.sid ? DB.sales.find(x => x.id === p.sid) : null;
-        entries.push({
-          id:      p.id,           // Date.now() as sort key
-          date:    p.date,
-          amount:  p.amount,
-          method:  p.method,
-          note:    p.note || '',
-          inv:     ls ? ls.inv : '',
-          initial: false
-        });
-      });
-
-    if (!entries.length) {
-      el.innerHTML = UI.empty('💳', 'No payments yet', 'No payments received from this customer yet.');
-      return;
-    }
-
-    // Sort: by date, then by id as tiebreaker
-    entries.sort((a, b) => {
-      const dd = new Date(a.date) - new Date(b.date);
-      const diff = dd !== 0 ? dd : a.id - b.id;
-      return LEDGER._phAsc ? diff : -diff;
+    // Initial payments at purchase
+    // Only the amount paid at sale time that is NOT already in DB.payments
+    DB.sales.filter(s=>s.cid===cid&&s.paid>0&&!s.isOpeningBalance).forEach(s=>{
+      // Sum all DB.payments linked to this sale
+      const linkedPayments = DB.payments.filter(p=>p.sid===s.id).reduce((a,p)=>a+p.amount,0);
+      const atPurchase = Math.max(0, (s.paid||0) - linkedPayments);
+      if (atPurchase > 0) {
+        entries.push({id:s.id, date:s.date, amount:atPurchase,
+          method:s.method, note:'Received at purchase', inv:s.inv,
+          initial:true, refund: s.refund||0});
+      }
     });
-
-    const totalPaid = entries.reduce((a, e) => a + e.amount, 0);
-    const atPurchaseCount = entries.filter(e => e.initial).length;
-    const laterCount      = entries.filter(e => !e.initial).length;
-
-    const items = entries.map((e, i) => {
-      const icon = mi[e.method] || mi.default;
-      const dotColor = e.initial
-        ? 'background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.3)'  // blue = initial
-        : 'background:rgba(31,184,90,.12);border-color:rgba(31,184,90,.3)';   // green = payment
-      const dotIcon = e.initial ? '🛒' : icon;
+    // Refund entries (broken sales where we owe money back)
+    DB.sales.filter(s=>s.cid===cid&&(s.refund||0)>0).forEach(s=>{
+      entries.push({id:s.id+'_ref', date:s.date, amount:-(s.refund),
+        method:'Refund', note:'Refund — Broken: '+s.inv, inv:s.inv,
+        initial:false, isRefund:true});
+    });
+    // Subsequent payments
+    DB.payments.filter(p=>p.cid===cid).forEach(p=>{
+      const ls=p.sid?DB.sales.find(x=>x.id===p.sid):null;
+      entries.push({id:p.id,date:p.date,amount:p.amount,method:p.method,note:p.note||'',inv:ls?ls.inv:'',initial:false});
+    });
+    if (!entries.length) { el.innerHTML=UI.empty('💳','No payments yet','No payments received from this customer yet.'); return; }
+    entries.sort((a,b)=>{const dd=new Date(a.date)-new Date(b.date); const diff=dd!==0?dd:a.id-b.id; return LEDGER._phAsc?diff:-diff;});
+    const totalPaid    = entries.filter(e=>!e.isRefund).reduce((a,e)=>a+e.amount,0);
+    const totalRefunds = entries.filter(e=>e.isRefund).reduce((a,e)=>a+Math.abs(e.amount),0);
+    const netReceived  = totalPaid - totalRefunds;
+    const atP=entries.filter(e=>e.initial).length, later=entries.filter(e=>!e.initial).length;
+    const items=entries.map((e,i)=>{
+      const icon=mi[e.method]||mi.default;
+      const isRefund = e.isRefund || false;
+      const dotCol = isRefund ? 'rgba(229,62,90,.12)' : e.initial ? 'rgba(59,130,246,.12)' : 'rgba(31,184,90,.12)';
+      const dotBdr = isRefund ? 'rgba(229,62,90,.3)'  : e.initial ? 'rgba(59,130,246,.3)'  : 'rgba(31,184,90,.3)';
+      const dotIcon = isRefund ? '↩' : e.initial ? '🛒' : icon;
+      const dispAmt = isRefund ? '↩ ' + UTIL.money(Math.abs(e.amount)) : UTIL.money(e.amount);
+      const amtClass = isRefund ? 'red' : '';
       return '<div class="ph-item">'
-        + '<div class="ph-dot" style="' + dotColor + '">' + dotIcon + '</div>'
-        + '<div class="ph-info">'
-          + '<div class="ph-amt">' + UTIL.money(e.amount) + '</div>'
-          + '<div class="ph-meta" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
-            + '<span class="badge bg-gray" style="font-size:10px">' + UTIL.esc(e.method) + '</span>'
-            + (e.initial ? '<span class="badge bg-blue" style="font-size:9px">AT PURCHASE</span>' : '')
-            + (e.inv ? '<span class="badge bg-gray" style="font-size:9px">' + UTIL.esc(e.inv) + '</span>' : '')
-            + (e.note && !e.initial ? '<span style="font-size:11px;color:var(--text-2)">' + UTIL.esc(e.note) + '</span>' : '')
-            + (e.initial ? '<span style="font-size:11px;color:var(--text-3)">Received at purchase</span>' : '')
-          + '</div>'
-        + '</div>'
-        + '<div class="ph-date">'
-          + '<div style="font-weight:600;color:var(--text)">' + UTIL.fmtDate(e.date) + '</div>'
-          + '<div style="font-size:10px;color:var(--text-3);margin-top:2px">' + (i+1) + ' of ' + entries.length + '</div>'
-        + '</div>'
-      + '</div>';
+        +'<div class="ph-dot" style="background:'+dotCol+';border-color:'+dotBdr+'">'+dotIcon+'</div>'
+        +'<div class="ph-info">'
+          +'<div class="ph-amt '+amtClass+'">'+dispAmt+'</div>'
+          +'<div class="ph-meta" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+            +'<span class="badge bg-gray" style="font-size:10px">'+UTIL.esc(e.method)+'</span>'
+            +(e.initial?'<span class="badge bg-blue" style="font-size:9px">AT PURCHASE</span>':'')
+            +(e.inv?'<span class="badge bg-gray" style="font-size:9px">'+UTIL.esc(e.inv)+'</span>':'')
+            +(e.note&&!e.initial?'<span style="font-size:11px;color:var(--text-2)">'+UTIL.esc(e.note)+'</span>':'')
+            +(e.initial?'<span style="font-size:11px;color:var(--text-3)">Received at purchase</span>':'')
+          +'</div>'
+        +'</div>'
+        +'<div class="ph-date">'
+          +'<div style="font-weight:600;color:var(--text)">'+UTIL.fmtDate(e.date)+'</div>'
+          +'<div style="font-size:10px;color:var(--text-3);margin-top:2px">'+(i+1)+' of '+entries.length+'</div>'
+        +'</div>'
+      +'</div>';
     }).join('');
-
-    const sortLabel = LEDGER._phAsc ? '↑ Oldest first' : '↓ Latest first';
-    el.innerHTML =
+    const sortLabel=LEDGER._phAsc?'↑ Oldest first':'↓ Latest first';
+    el.innerHTML=
       '<div style="padding:10px 16px;background:var(--gold-f);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">'
-        + '<div><span style="font-size:12px;color:var(--text-2)">'
-          + entries.length + ' total'
-          + (atPurchaseCount > 0 ? ' · ' + atPurchaseCount + ' at purchase' : '')
-          + (laterCount > 0 ? ' · ' + laterCount + ' collected later' : '')
-        + '</span></div>'
-        + '<div style="display:flex;align-items:center;gap:10px">'
-          + '<button onclick="LEDGER._phAsc=!LEDGER._phAsc;LEDGER.showTab(\'payments\',null)" '
-            + 'style="background:none;border:1px solid var(--line);border-radius:4px;padding:4px 10px;font-size:11px;color:var(--text-2);cursor:pointer;font-family:var(--ff)">'
-            + sortLabel
-          + '</button>'
-          + '<span style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--green-l)">' + UTIL.money(totalPaid) + ' total</span>'
-        + '</div>'
-      + '</div>'
-      + items;
+        +'<div><span style="font-size:12px;color:var(--text-2)">'+entries.length+' total'
+          +(atP?' · '+atP+' at purchase':'')+( later?' · '+later+' collected later':'')
+        +'</span></div>'
+        +'<div style="display:flex;align-items:center;gap:10px">'
+          +'<button onclick="LEDGER._phAsc=!LEDGER._phAsc;LEDGER.showTab(\'payments\',null)" '
+            +'style="background:none;border:1px solid var(--line);border-radius:4px;padding:4px 10px;font-size:11px;color:var(--text-2);cursor:pointer;font-family:var(--ff)">'
+            +sortLabel
+          +'</button>'
+          +'<span style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--green-l)">'+UTIL.money(totalPaid)+' received'+(totalRefunds>0?' <span style="color:var(--red)">↩ '+UTIL.money(totalRefunds)+' refund</span>':'')+'</span>'
+        +'</div>'
+      +'</div>'
+      +items;
   },
 
   openSaleTimeline(sid) {
-    const s = DB.sales.find(x => x.id === sid);
-    if (!s) return;
-    const el = document.getElementById('ledger-tbl');
-    const prod = DB.products.find(x => x.id === s.pid);
-    const pName = prod?.name || s.pname || '—';
-    const mi = { Cash:'💵', UPI:'📱', 'Bank Transfer':'🏦', Cheque:'📄', default:'💳' };
-    const rows = [{ date:s.date, id:s.id, type:'SALE', label:s.inv+' · '+pName+' x'+s.qty, debit:s.total, credit:0, method:s.method }];
-    DB.payments.filter(px => px.sid === s.id).sort((a,b) => a.id-b.id).forEach(px => {
-      rows.push({ date:px.date, id:px.id, type:'PAYMENT', label:px.note||px.method, debit:0, credit:px.amount, method:px.method });
+    const s=DB.sales.find(x=>x.id===sid); if(!s) return;
+    const el=document.getElementById('ledger-tbl');
+    const prod=DB.products.find(x=>x.id===s.pid);
+    const pName=prod?.name||s.pname||'—';
+    const mi={Cash:'💵',UPI:'📱','Bank Transfer':'🏦',Cheque:'📄',default:'💳'};
+    const rows=[{date:s.date,id:s.id,type:'SALE',label:s.inv+' · '+pName+' x'+s.qty,debit:s.total,credit:0,method:s.method}];
+    DB.payments.filter(px=>px.sid===s.id).sort((a,b)=>a.id-b.id).forEach(px=>{
+      rows.push({date:px.date,id:px.id,type:'PAYMENT',label:px.note||px.method,debit:0,credit:px.amount,method:px.method});
     });
-    let bal = 0;
-    const tableRows = rows.map(r => {
-      bal += r.debit - r.credit;
-      const icon = r.type==='SALE' ? '🛒' : (mi[r.method]||mi.default);
+    let bal=0;
+    const tableRows=rows.map(r=>{
+      bal+=r.debit-r.credit;
+      const icon=r.type==='SALE'?'🛒':(mi[r.method]||mi.default);
       return '<tr>'
-        + '<td class="dim">' + UTIL.fmtDate(r.date) + '</td>'
-        + '<td><span class="badge '+(r.type==='SALE'?'bg-blue':'bg-green')+'" style="font-size:10px">'+r.type+'</span></td>'
-        + '<td style="font-size:12.5px">' + icon + ' ' + UTIL.esc(r.label) + '</td>'
-        + '<td class="gold">'  + (r.debit  > 0 ? UTIL.money(r.debit)  : '—') + '</td>'
-        + '<td class="green">' + (r.credit > 0 ? UTIL.money(r.credit) : '—') + '</td>'
-        + '<td class="'+(bal>0?'red':'green')+' mono">' + UTIL.money(bal) + '</td>'
-      + '</tr>';
+        +'<td class="dim">'+UTIL.fmtDate(r.date)+'</td>'
+        +'<td><span class="badge '+(r.type==='SALE'?'bg-blue':'bg-green')+'" style="font-size:10px">'+r.type+'</span></td>'
+        +'<td style="font-size:12.5px">'+icon+' '+UTIL.esc(r.label)+'</td>'
+        +'<td class="gold">'+(r.debit>0?UTIL.money(r.debit):'—')+'</td>'
+        +'<td class="green">'+(r.credit>0?UTIL.money(r.credit):'—')+'</td>'
+        +'<td class="'+(bal>0?'red':'green')+' mono">'+UTIL.money(bal)+'</td>'
+      +'</tr>';
     }).join('');
-    el.innerHTML =
+    el.innerHTML=
       '<div style="padding:10px 14px;background:var(--ink-3);border-radius:var(--r2);margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
-        + '<button class="btn btn-ghost btn-xs" onclick="LEDGER.renderSalesTab('+s.cid+')\">\u2190 Back to Sales</button>'
-        + '<span style="font-size:13px;font-weight:700">' + UTIL.esc(s.inv) + ' — Transaction History</span>'
-        + '<span style="font-size:12px;color:var(--text-2)">Billed: '+UTIL.money(s.total)+' · Paid: '+UTIL.money(s.paid)+' · Due: '+UTIL.money(s.pending)+'</span>'
-        + (s.pending > 0
-          ? '<button class="btn btn-gold btn-xs" onclick="PAYMENT.openForSale('+s.id+')">+ Payment</button>'
-          : '<span class="badge bg-green" style="font-size:10px">✓ Fully Paid</span>')
-      + '</div>'
-      + '<div class="tbl-wrap"><table>'
-        + '<thead><tr><th>Date</th><th>Type</th><th>Details</th><th>Billed</th><th>Received</th><th>Balance</th></tr></thead>'
-        + '<tbody>' + tableRows + '</tbody>'
-      + '</table></div>';
+        +'<button class="btn btn-ghost btn-xs" onclick="LEDGER.renderSalesTab('+s.cid+')">← Back to Sales</button>'
+        +'<span style="font-size:13px;font-weight:700">'+UTIL.esc(s.inv)+' — Transaction History</span>'
+        +'<span style="font-size:12px;color:var(--text-2)">Billed: '+UTIL.money(s.total)+' · Paid: '+UTIL.money(s.paid)+' · Due: '+UTIL.money(s.pending)+'</span>'
+        +(s.pending>0?'<button class="btn btn-gold btn-xs" onclick="PAYMENT.openForSale('+s.id+')">+ Payment</button>':'<span class="badge bg-green" style="font-size:10px">✓ Fully Paid</span>')
+      +'</div>'
+      +'<div class="tbl-wrap"><table>'
+        +'<thead><tr><th>Date</th><th>Type</th><th>Details</th><th>Billed</th><th>Received</th><th>Balance</th></tr></thead>'
+        +'<tbody>'+tableRows+'</tbody>'
+      +'</table></div>';
+  },
+
+  openOpeningBalance() {
+    const cid = UI._curLedgerCid;
+    if (!cid) return;
+    document.getElementById('ob-date').value   = UTIL.today();
+    document.getElementById('ob-amount').value = '';
+    document.getElementById('ob-paid').value   = '0';
+    document.getElementById('ob-note').value   = 'Opening balance (prior dues)';
+    UI.openModal('m-opening-bal');
+    setTimeout(() => document.getElementById('ob-amount').focus(), 100);
+  },
+
+  saveOpeningBalance() {
+    const cid    = UI._curLedgerCid;
+    if (!cid) return;
+    const date   = document.getElementById('ob-date').value;
+    const amount = parseFloat(document.getElementById('ob-amount').value) || 0;
+    const paid   = Math.min(parseFloat(document.getElementById('ob-paid').value) || 0, amount);
+    const note   = document.getElementById('ob-note').value.trim() || 'Opening balance (prior dues)';
+    if (!date)       { TOAST.show('Select a date', 'err'); return; }
+    if (amount <= 0) { TOAST.show('Enter the amount owed', 'err'); return; }
+    // Create a special 'opening balance' sale entry
+    const inv = 'OB-' + String(DB._inv++).padStart(3,'0');
+    DB.sales.push({
+      id:       DB._sid++,
+      inv,
+      date,
+      cid,
+      pid:      null,
+      qty:      1,
+      price:    amount,
+      total:    amount,
+      paid,
+      pending:  Math.max(0, amount - paid),
+      method:   'Prior Balance',
+      notes:    note,
+      cname:    DB.customers.find(x=>x.id===cid)?.name || '',
+      pname:    'Opening Balance',
+      cost:     0,
+      profit:   0,
+      isOpeningBalance: true
+    });
+    // If some was already paid, record that payment too
+    if (paid > 0) {
+      DB.payments.push({
+        id:     Date.now(),
+        cid,
+        sid:    DB._sid - 1,
+        amount: paid,
+        method: 'Prior Payment',
+        note:   'Payment before system entry',
+        date
+      });
+    }
+    DATABASE.save();
+    UI.closeModal('m-opening-bal');
+    LEDGER.open(cid);
+    UI.updatePayBadge();
+    TOAST.show('Opening balance recorded', 'ok');
   },
 
   exportCSV() {
@@ -2570,118 +3191,203 @@ const INVOICE = {
 
   open(sid) {
     this._sid = sid;
-    const s   = DB.sales.find(x => x.id === sid);
+    const s = DB.sales.find(x => x.id === sid);
     if (!s) return;
     const c   = DB.customers.find(x => x.id === s.cid);
-    const p   = DB.products.find(x => x.id === s.pid);
     const cfg = DB.settings;
-    const logoSrc = document.querySelector('.login-logo-img')?.src || '';
+    const logo = document.querySelector('.login-logo-img');
+    const logoSrc = logo ? logo.src : '';
+    const pName = DB.products.find(x => x.id === s.pid)?.name || s.pname || '—';
+    const cName = c?.name || s.cname || 'Customer';
 
-    // GST removed from invoice
+    // ISSUE SLIP = guarantee billing, used_mm not yet entered
+    const isIssueSlip = (s.guarantee_mm > 0) && !s.used_mm;
 
-    const invoiceHtml = `<div class="inv-doc" id="inv-printable">
-      <div class="inv-head">
-        <div class="inv-co">
-          <img class="inv-co-logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" style="width:54px;height:54px;border-radius:10px;object-fit:cover;flex-shrink:0">
-          <div>
-            <div class="inv-co-name">${UTIL.esc(cfg.name)}</div>
-            <div class="inv-co-sub">Borewell Drilling Tools &amp; Equipment</div>
-            <div class="inv-co-detail">${UTIL.esc(cfg.phone)}${cfg.email?' &middot; '+UTIL.esc(cfg.email):''}</div>
-            ${cfg.gst ? `<div class="inv-co-detail"><strong>GSTIN:</strong> ${UTIL.esc(cfg.gst)}</div>` : ''}
-            ${cfg.address ? `<div class="inv-co-detail">${UTIL.esc(cfg.address)}</div>` : ''}
+    let body;
+
+    if (isIssueSlip) {
+      // ── ISSUE SLIP ─────────────────────────────────────────────
+      body = `<div class="inv-doc" id="inv-printable">
+        <div class="inv-head">
+          <div class="inv-co">
+            <img src="${logoSrc}" onerror="this.style.display='none'"
+              style="width:52px;height:52px;border-radius:8px;object-fit:cover;flex-shrink:0">
+            <div>
+              <div class="inv-co-name">${UTIL.esc(cfg.name)}</div>
+              <div class="inv-co-sub">Borewell Drilling Tools &amp; Equipment</div>
+              ${cfg.phone   ? `<div class="inv-co-detail">${UTIL.esc(cfg.phone)}</div>` : ''}
+              ${cfg.address ? `<div class="inv-co-detail">${UTIL.esc(cfg.address)}</div>` : ''}
+            </div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:9px;letter-spacing:2px;color:#aaa;text-transform:uppercase;margin-bottom:4px">Issue Slip</div>
+            <div class="inv-no-val" style="color:var(--gold,#d4920a)">${UTIL.esc(s.inv)}</div>
+            <div class="inv-no-date">Date: ${UTIL.fmtDate(s.date)}</div>
           </div>
         </div>
-        <div style="text-align:right">
-          <div class="inv-no-lbl">Tax Invoice</div>
-          <div class="inv-no-val">${UTIL.esc(s.inv)}</div>
-          <div class="inv-no-date">Date: ${UTIL.fmtDate(s.date)}</div>
+        <div class="inv-divider"></div>
+        <div class="inv-parties">
+          <div>
+            <div class="inv-pl">Issued To</div>
+            <div class="inv-pn">${UTIL.esc(cName)}</div>
+            <div class="inv-pd">&#128222; ${UTIL.esc(c?.phone || '—')}</div>
+            ${c?.location ? `<div class="inv-pd">&#128205; ${UTIL.esc(c.location)}</div>` : ''}
+          </div>
+          <div>
+            <div class="inv-pl">Status</div>
+            <div style="font-weight:700;color:#d4920a;font-size:14px">&#9881; Running</div>
+            <div class="inv-pd">Bill finalised after job</div>
+          </div>
         </div>
-      </div>
-      <div class="inv-divider"></div>
-      <div class="inv-parties">
-        <div>
-          <div class="inv-pl">Bill To</div>
-          <div class="inv-pn">${UTIL.esc(c?.name||'Customer')}</div>
-          <div class="inv-pd">&#128222; ${UTIL.esc(c?.phone||'—')}</div>
-          ${c?.location ? `<div class="inv-pd">&#128205; ${UTIL.esc(c.location)}</div>` : ''}
+        <table class="inv-tbl">
+          <thead><tr>
+            <th>Product</th><th>Guarantee MM</th><th>Rate / MM</th><th>Max Bill</th>
+          </tr></thead>
+          <tbody><tr>
+            <td><strong>${UTIL.esc(pName)}</strong></td>
+            <td style="font-weight:700">${s.guarantee_mm} mm</td>
+            <td>${UTIL.money(s.rate_per_mm || 0)} / mm</td>
+            <td>${UTIL.money(s.sell_price || s.price || 0)}</td>
+          </tr></tbody>
+        </table>
+        <div style="margin:14px 0;padding:12px 16px;background:#fffbeb;border:1px solid #fde68a;
+          border-radius:6px;font-size:12.5px;color:#92400e;line-height:1.8">
+          <strong>Guarantee Terms:</strong><br>
+          &#8226; Bit guaranteed for <strong>${s.guarantee_mm} mm</strong> of drilling.<br>
+          &#8226; Final bill = Used MM &times; ${UTIL.money(s.rate_per_mm || 0)} per mm.<br>
+          &#8226; If used MM exceeds ${s.guarantee_mm} mm, full price ${UTIL.money(s.sell_price || s.price || 0)} applies.<br>
+          &#8226; Amount payable only after bit is returned and used MM confirmed.
         </div>
-        <div>
-          <div class="inv-pl">Payment</div>
-          <div class="inv-pn">${UTIL.esc(s.method)}</div>
-          <div class="inv-pd">${s.pending === 0 ? '&#10004; Fully Paid' : '&#9888; Partial Payment'}</div>
-          ${s.notes ? `<div class="inv-pd" style="font-style:italic;margin-top:4px">${UTIL.esc(s.notes)}</div>` : ''}
-        </div>
-      </div>
-      <table class="inv-tbl">
-        <thead><tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr></thead>
-        <tbody><tr>
-          <td>1</td>
-          <td><strong>${UTIL.esc(p?.name||'—')}</strong><br><span style="font-size:11px;color:#888">${UTIL.esc(p?.category||'')}</span></td>
-          <td>${s.qty}</td>
-          <td>&#8377;${(s.price||0).toLocaleString('en-IN')}</td>
-          <td><strong>&#8377;${s.total.toLocaleString('en-IN')}</strong></td>
-        </tr></tbody>
-      </table>
-      <div class="inv-totals"><div class="inv-tot-box">
-        <div class="inv-tot-row paid"><span>Amount Paid</span><span>&#8377;${s.paid.toLocaleString('en-IN')}</span></div>
-        ${s.pending > 0 ? `<div class="inv-tot-row bal"><span>Balance Due</span><span>&#8377;${s.pending.toLocaleString('en-IN')}</span></div>` : '<div class="inv-tot-row" style="color:#16a34a"><span>&#10004; Paid in Full</span><span></span></div>'}
-        <div class="inv-tot-row final"><span>Invoice Total</span><span>&#8377;${s.total.toLocaleString('en-IN')}</span></div>
-      </div></div>
+        <div class="inv-footer">${UTIL.esc(cfg.name)} &nbsp;&middot;&nbsp; Guarantee Billing Slip &nbsp;&middot;&nbsp; <em>Not a Final Invoice</em></div>
+      </div>`;
 
-      <div class="inv-footer">${UTIL.esc(cfg.name)}<br>Thank you for your business! &middot; Computer generated invoice — No signature required.</div>
-    </div>`;
+    } else {
+      // ── FINAL INVOICE ──────────────────────────────────────────
+      const isGuarantee = s.guarantee_mm > 0;
+      body = `<div class="inv-doc" id="inv-printable">
+        <div class="inv-head">
+          <div class="inv-co">
+            <img src="${logoSrc}" onerror="this.style.display='none'"
+              style="width:52px;height:52px;border-radius:8px;object-fit:cover;flex-shrink:0">
+            <div>
+              <div class="inv-co-name">${UTIL.esc(cfg.name)}</div>
+              <div class="inv-co-sub">Borewell Drilling Tools &amp; Equipment</div>
+              ${cfg.phone   ? `<div class="inv-co-detail">${UTIL.esc(cfg.phone)}</div>` : ''}
+              ${cfg.gst     ? `<div class="inv-co-detail"><strong>GSTIN:</strong> ${UTIL.esc(cfg.gst)}</div>` : ''}
+              ${cfg.address ? `<div class="inv-co-detail">${UTIL.esc(cfg.address)}</div>` : ''}
+            </div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:9px;letter-spacing:2px;color:#aaa;text-transform:uppercase;margin-bottom:4px">Invoice</div>
+            <div class="inv-no-val">${UTIL.esc(s.inv)}</div>
+            <div class="inv-no-date">Date: ${UTIL.fmtDate(s.date)}</div>
+          </div>
+        </div>
+        <div class="inv-divider"></div>
+        <div class="inv-parties">
+          <div>
+            <div class="inv-pl">Bill To</div>
+            <div class="inv-pn">${UTIL.esc(cName)}</div>
+            <div class="inv-pd">&#128222; ${UTIL.esc(c?.phone || '—')}</div>
+            ${c?.location ? `<div class="inv-pd">&#128205; ${UTIL.esc(c.location)}</div>` : ''}
+          </div>
+          <div>
+            <div class="inv-pl">Payment</div>
+            <div class="inv-pn">${UTIL.esc(s.method || '—')}</div>
+            <div class="inv-pd">${s.pending === 0 ? '&#10003; Fully Paid' : '&#9888; Balance Due'}</div>
+            ${s.notes ? `<div class="inv-pd" style="font-style:italic">${UTIL.esc(s.notes)}</div>` : ''}
+          </div>
+        </div>
+        <table class="inv-tbl">
+          <thead><tr>
+            <th>Product</th>
+            ${isGuarantee ? '<th>Guarantee</th><th>Used MM</th><th>Rate/MM</th>' : '<th>Qty</th><th>Unit Price</th>'}
+            <th>Amount</th>
+          </tr></thead>
+          <tbody><tr>
+            <td><strong>${UTIL.esc(pName)}</strong></td>
+            ${isGuarantee
+              ? `<td>${s.guarantee_mm} mm</td>
+                 <td><strong>${s.used_mm} mm</strong></td>
+                 <td>${UTIL.money(s.rate_per_mm)}/mm</td>`
+              : `<td>${s.qty}</td><td>${UTIL.money(s.sell_price || s.price)}</td>`
+            }
+            <td><strong>${UTIL.money(s.total)}</strong></td>
+          </tr></tbody>
+        </table>
+        <div class="inv-totals"><div class="inv-tot-box">
+          <div class="inv-tot-row paid">
+            <span>Amount Paid</span><span>${UTIL.money(s.paid)}</span>
+          </div>
+          ${s.pending > 0
+            ? `<div class="inv-tot-row bal"><span>Balance Due</span><span>${UTIL.money(s.pending)}</span></div>`
+            : `<div class="inv-tot-row" style="color:#16a34a"><span>&#10003; Paid in Full</span><span></span></div>`
+          }
+          <div class="inv-tot-row final">
+            <span>Invoice Total</span><span>${UTIL.money(s.total)}</span>
+          </div>
+        </div></div>
+        <div class="inv-footer">${UTIL.esc(cfg.name)} &nbsp;&middot;&nbsp; Thank you for your business!</div>
+      </div>`;
+    }
 
-    document.getElementById('invoice-body').innerHTML = invoiceHtml;
+    document.getElementById('invoice-body').innerHTML = body;
     UI.openModal('m-invoice');
   },
 
-
   editSale() {
-    // Open sale edit form for the current invoice's sale
     UI.closeModal('m-invoice');
     if (this._sid) SALE.openForm(this._sid);
+  },
+
+  editSaleWithPwd() {
+    PWDMODAL.ask('Edit Sale', 'Enter your password to edit this sale.').then(ok => {
+      if (!ok) return;
+      UI.closeModal('m-invoice');
+      if (this._sid) SALE.openForm(this._sid);
+    });
   },
 
   print() {
     const el = document.getElementById('inv-printable');
     if (!el) return;
-    const styleText = `
+    const styles = `
       body{font-family:'Outfit',sans-serif;background:#fff;margin:0;padding:20px}
       *{box-sizing:border-box}
-      .inv-doc{max-width:580px;margin:0 auto;padding:32px;font-family:'Outfit',sans-serif;color:#111}
+      .inv-doc{max-width:580px;margin:0 auto;padding:32px;color:#111}
       .inv-head{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px;margin-bottom:18px}
       .inv-co{display:flex;align-items:center;gap:12px}
-      .inv-co-logo{width:48px;height:48px;border-radius:8px;object-fit:cover;border:1px solid #e5e7eb}
-      .inv-co-name{font-size:16px;font-weight:800;color:#111}
+      .inv-co-name{font-size:17px;font-weight:800}
       .inv-co-sub{font-size:11px;color:#888;margin-top:2px}
-      .inv-co-detail{font-size:11px;color:#777;margin-top:1px;line-height:1.5}
-      .inv-no-lbl{font-size:9px;color:#aaa;letter-spacing:2px;text-transform:uppercase;margin-bottom:3px}
+      .inv-co-detail{font-size:11px;color:#777;margin-top:1px}
       .inv-no-val{font-size:22px;font-weight:700;color:#d4920a;font-family:monospace}
       .inv-no-date{font-size:12px;color:#888;margin-top:4px}
-      .inv-divider{height:2px;background:linear-gradient(90deg,#d4920a 0%,#3b82f6 50%,transparent 100%);margin:16px 0}
+      .inv-divider{height:2px;background:linear-gradient(90deg,#d4920a,#3b82f6,transparent);margin:14px 0}
       .inv-parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px}
       .inv-pl{font-size:9px;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;color:#bbb;margin-bottom:5px}
-      .inv-pn{font-weight:700;font-size:14px;color:#111}
-      .inv-pd{font-size:12px;color:#666;margin-top:2px;line-height:1.5}
+      .inv-pn{font-weight:700;font-size:14px}
+      .inv-pd{font-size:12px;color:#666;margin-top:2px}
       .inv-tbl{width:100%;border-collapse:collapse;margin-bottom:18px}
-      .inv-tbl th{background:#f9fafb;padding:9px 12px;font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#999;border-bottom:1px solid #f0f0f0;text-align:left}
-      .inv-tbl td{padding:10px 12px;border-bottom:1px solid #f5f5f5;font-size:13px;color:#333}
+      .inv-tbl th{background:#f9fafb;padding:9px 12px;font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#999;border-bottom:1px solid #eee;text-align:left}
+      .inv-tbl td{padding:10px 12px;border-bottom:1px solid #f5f5f5;font-size:13px}
       .inv-totals{display:flex;justify-content:flex-end;margin-bottom:16px}
-      .inv-tot-box{width:210px}
+      .inv-tot-box{width:220px}
       .inv-tot-row{display:flex;justify-content:space-between;padding:4px 0;font-size:12.5px;color:#555}
-      .inv-tot-row.paid{color:#1fb85a;font-weight:600}
-      .inv-tot-row.bal{color:#e53e5a;font-weight:700}
+      .inv-tot-row.paid{color:#16a34a;font-weight:600}
+      .inv-tot-row.bal{color:#dc2626;font-weight:700}
       .inv-tot-row.final{border-top:2px solid #111;padding-top:9px;margin-top:5px;font-weight:800;font-size:15px;color:#111}
-      .inv-footer{margin-top:20px;padding-top:12px;border-top:1px solid #f0f0f0;text-align:center;font-size:11px;color:#bbb;line-height:1.6}
+      .inv-footer{margin-top:20px;padding-top:12px;border-top:1px solid #eee;text-align:center;font-size:11px;color:#bbb}
     `;
-    const w = window.open('', '_blank', 'width=700,height=900');
-    w.document.write(`<!DOCTYPE html><html><head><title>Invoice</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
-    <style>${styleText}</style></head><body>${el.outerHTML}</body></html>`);
+    const w = window.open('','_blank','width=700,height=900');
+    if (!w) { TOAST.show('Allow popups to print', 'err'); return; }
+    w.document.write('<!DOCTYPE html><html><head><title>Invoice ' + (this._sid||'') +
+      '</title><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">' +
+      '<style>' + styles + '</style></head><body>' + el.outerHTML + '</body></html>');
     w.document.close();
     setTimeout(() => { w.focus(); w.print(); }, 600);
   }
 };
+
 
 /* ════════════════════════════════
    REPORT MODULE
@@ -2739,6 +3445,63 @@ const REPORT = {
       // FIX: safe Number() cast on inline onclick
       const rows = pend.map(c => `<tr><td><strong>${UTIL.esc(c.name)}</strong></td><td class="mono dim">${UTIL.esc(c.phone)}</td><td class="dim">${UTIL.esc(c.location||'—')}</td><td class="red fw7">${UTIL.money(c.pending)}</td><td><button class="btn btn-gold btn-xs" onclick="PAYMENT.openForCustomer(${Number(c.id)})">Collect</button></td></tr>`).join('');
       el.innerHTML = `<div style="background:rgba(212,146,10,0.08);border:1px solid rgba(212,146,10,0.18);border-radius:var(--r2);padding:10px 14px;margin-bottom:12px;font-size:13px;color:var(--gold-l)">⚠ Total outstanding: <strong>${UTIL.money(totalPnd)}</strong> across ${pend.length} customer${pend.length !== 1 ? 's' : ''}</div><div class="card"><div class="tbl-wrap"><table><thead><tr><th>Customer</th><th>Phone</th><th>Location</th><th>Pending</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+
+
+    } else if (type === 'pl') {
+      if (!DB.expenses) DB.expenses = [];
+      const doneSales    = DB.sales.filter(s => s.status === 'completed' || !s.status);
+      const runningSales = DB.sales.filter(s => s.status === 'running');
+      const totalSales   = doneSales.reduce((a,s) => a + s.total, 0);
+      const totalCost    = doneSales.reduce((a,s) => a + (s.cost_price||s.cost||0) * s.qty, 0);
+      const grossProfit  = doneSales.reduce((a,s) => a + (s.profit||0), 0);
+      const totalExp     = DB.expenses.reduce((a,e) => a + e.amount, 0);
+      const netProfit    = grossProfit - totalExp;
+      // Monthly breakdown
+      const months = {};
+      doneSales.forEach(s => {
+        const m = s.date ? s.date.slice(0,7) : '?';
+        if (!months[m]) months[m] = { sales:0, cost:0, profit:0, exp:0 };
+        months[m].sales  += s.total;
+        months[m].cost   += (s.cost_price||s.cost||0) * s.qty;
+        months[m].profit += s.profit || 0;
+      });
+      DB.expenses.forEach(e => {
+        const m = e.date ? e.date.slice(0,7) : '?';
+        if (!months[m]) months[m] = { sales:0, cost:0, profit:0, exp:0 };
+        months[m].exp += e.amount;
+      });
+      const mRows = Object.entries(months)
+        .sort((a,b) => b[0].localeCompare(a[0]))
+        .map(([m,v]) => {
+          const net = v.profit - v.exp;
+          return `<tr>
+            <td class="mono dim">${m}</td>
+            <td class="gold">${UTIL.money(v.sales)}</td>
+            <td class="dim">${UTIL.money(v.cost)}</td>
+            <td class="green">${UTIL.money(v.profit)}</td>
+            <td class="red">${UTIL.money(v.exp)}</td>
+            <td class="${net>=0?'green':'red'}">${UTIL.money(net)}</td>
+          </tr>`;
+        }).join('');
+      el.innerHTML = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px;margin-bottom:14px">
+          <div class="dash-card c-gold"><div class="dc-ico">&#8377;</div><div class="dc-val c-gold">${UTIL.money(totalSales)}</div><div class="dc-lbl">Revenue</div></div>
+          <div class="dash-card c-blue"><div class="dc-ico">&#128230;</div><div class="dc-val c-blue">${UTIL.money(totalCost)}</div><div class="dc-lbl">Cost of Goods</div></div>
+          <div class="dash-card c-green"><div class="dc-ico">&#128200;</div><div class="dc-val c-green">${UTIL.money(grossProfit)}</div><div class="dc-lbl">Gross Profit</div></div>
+          <div class="dash-card c-red"><div class="dc-ico">&#128184;</div><div class="dc-val c-red">${UTIL.money(totalExp)}</div><div class="dc-lbl">Expenses</div></div>
+          <div class="dash-card c-${netProfit>=0?'green':'red'}"><div class="dc-ico">&#127919;</div><div class="dc-val c-${netProfit>=0?'green':'red'}">${UTIL.money(netProfit)}</div><div class="dc-lbl">Net Profit</div></div>
+          <div class="dash-card c-gold"><div class="dc-ico">&#9203;</div><div class="dc-val c-gold">${runningSales.length}</div><div class="dc-lbl">Running (MM)</div></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title">Monthly P&amp;L</div>
+            <button class="btn btn-ghost btn-xs" onclick="EXPORT.csv('pl')">&#8595; Export CSV</button>
+          </div>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>Month</th><th>Revenue</th><th>Cost</th><th>Gross Profit</th><th>Expenses</th><th>Net Profit</th></tr></thead>
+            <tbody>${mRows}</tbody>
+          </table></div>
+        </div>`;
     }
   }
 };
@@ -2873,6 +3636,26 @@ const EXPORT = {
           });
         fn = 'UBE-payments-' + UTIL.today() + '.csv';
 
+      } else if (type === 'pl') {
+        const done = DB.sales.filter(s => s.status === 'completed' || !s.status);
+        const ts   = done.reduce((a,s) => a+s.total,0);
+        const tc   = done.reduce((a,s) => a+(s.cost_price||s.cost||0)*s.qty,0);
+        const gp   = done.reduce((a,s) => a+(s.profit||0),0);
+        const te   = (DB.expenses||[]).reduce((a,e) => a+e.amount,0);
+        csv = 'Metric,Amount\n"Revenue",' + ts + '\n"Cost of Goods",' + tc +
+              '\n"Gross Profit",' + gp + '\n"Expenses",' + te +
+              '\n"Net Profit",' + (gp-te) + '\n\nSale Details\n' +
+              'Invoice,Date,Customer,Product,Qty,Sell Price,Cost,Total,Profit\n';
+        done.forEach(s => {
+          const c = DB.customers.find(x=>x.id===s.cid);
+          const p = DB.products.find(x=>x.id===s.pid);
+          csv += '"'+s.inv+'","'+s.date+'","'+(c?.name||s.cname||'')+'","'+
+                 (p?.name||s.pname||'')+'",'+s.qty+','+
+                 (s.sell_price||s.price)+','+(s.cost_price||s.cost||0)+','+
+                 s.total+','+(s.profit||0)+'\n';
+        });
+        fn = 'UBE-PL-' + UTIL.today() + '.csv';
+
       } else if (type === 'all') {
         // Full database as single multi-sheet CSV backup
         this.backup();
@@ -2975,6 +3758,184 @@ const EXPORT = {
     input.value = '';
   }
 };
+
+
+
+/* ════════════════════════════════
+   EXPENSE MODULE
+════════════════════════════════ */
+const EXPENSE = {
+
+  onCatChange() {
+    const v = document.getElementById('e-cat').value;
+    document.getElementById('e-other-wrap').style.display = v === 'Other (specify)' ? 'block' : 'none';
+  },
+
+  onCustomerChange() {
+    const cid = parseInt(document.getElementById('e-customer-link').value) || null;
+    this._fillSales(cid, []);
+  },
+
+  _fillCustomers(selectedId) {
+    const el = document.getElementById('e-customer-link');
+    el.innerHTML = '<option value="">&#8212; Not linked &#8212;</option>' +
+      DB.customers.map(c =>
+        `<option value="${c.id}" ${c.id === selectedId ? 'selected' : ''}>${UTIL.esc(c.name)}</option>`
+      ).join('');
+  },
+
+  _fillSales(filterCid, selectedIds) {
+    const el   = document.getElementById('e-sale-link');
+    const list = filterCid
+      ? DB.sales.filter(s => s.cid === filterCid)
+      : DB.sales;
+    el.innerHTML = list.slice().reverse().map(s => {
+      const c     = DB.customers.find(x => x.id === s.cid);
+      const pName = DB.products.find(x => x.id === s.pid)?.name || s.pname || '?';
+      const sel   = (selectedIds || []).includes(s.id) ? 'selected' : '';
+      return `<option value="${s.id}" ${sel}>${UTIL.esc(s.inv)} | ` +
+        `${UTIL.esc(c?.name || s.cname || '?')} | ${UTIL.esc(pName)} ` +
+        `(${UTIL.money(s.total)})</option>`;
+    }).join('');
+  },
+
+  openForm(id) {
+    const e = id ? (DB.expenses || []).find(x => x.id === id) : null;
+    document.getElementById('m-exp-ttl').textContent = e ? 'Edit Expense' : 'Add Expense';
+    document.getElementById('e-eid').value    = e ? e.id    : '';
+    document.getElementById('e-date').value   = e ? e.date  : UTIL.today();
+    document.getElementById('e-amount').value = e ? e.amount : '';
+    document.getElementById('e-note').value   = e ? (e.note || '') : '';
+    document.getElementById('e-custom-cat').value = '';
+    document.getElementById('e-other-wrap').style.display = 'none';
+
+    // Category
+    const catEl = document.getElementById('e-cat');
+    const savedCat = e?.category || '';
+    const knownCats = Array.from(catEl.options).map(o => o.value);
+    if (savedCat && !knownCats.includes(savedCat)) {
+      catEl.value = 'Other (specify)';
+      document.getElementById('e-custom-cat').value = savedCat;
+      document.getElementById('e-other-wrap').style.display = 'block';
+    } else {
+      catEl.value = savedCat || catEl.options[0].value;
+    }
+
+    // Customer & sales
+    const customerId = e?.customerId || null;
+    const savedSids  = e?.sids || (e?.sid ? [e.sid] : []);
+    this._fillCustomers(customerId);
+    this._fillSales(customerId, savedSids);
+
+    UI.openModal('m-expense');
+    setTimeout(() => document.getElementById('e-amount').focus(), 100);
+  },
+
+  save() {
+    const amount = parseFloat(document.getElementById('e-amount').value) || 0;
+    const date   = document.getElementById('e-date').value;
+    const note   = document.getElementById('e-note').value.trim();
+    if (amount <= 0) { TOAST.show('Enter a valid amount', 'err'); return; }
+    if (!date)       { TOAST.show('Select a date', 'err'); return; }
+    if (!note)       { TOAST.show('Add a description', 'err'); return; }
+    if (!DB.expenses) DB.expenses = [];
+
+    let cat = document.getElementById('e-cat').value;
+    if (cat === 'Other (specify)') {
+      const custom = document.getElementById('e-custom-cat').value.trim();
+      if (!custom) { TOAST.show('Enter custom category name', 'err'); return; }
+      cat = custom;
+    }
+
+    const customerId = parseInt(document.getElementById('e-customer-link').value) || null;
+    const saleOpts   = Array.from(document.getElementById('e-sale-link').selectedOptions);
+    const sids       = saleOpts.map(o => parseInt(o.value)).filter(Boolean);
+    const sid        = sids[0] || null;
+    const eid        = document.getElementById('e-eid').value;
+
+    if (eid) {
+      const e = DB.expenses.find(x => x.id === parseInt(eid));
+      if (e) Object.assign(e, { date, amount, category: cat, note, customerId, sid, sids });
+      TOAST.show('Expense updated');
+    } else {
+      DB.expenses.push({ id: DB._eid++, date, amount, category: cat, note, customerId, sid, sids });
+      TOAST.show('Expense added');
+    }
+    DATABASE.save();
+    UI.closeModal('m-expense');
+    this.render();
+    DASHBOARD.render();
+  },
+
+  delete(id) {
+    if (!confirm('Delete this expense?')) return;
+    DB.expenses = (DB.expenses || []).filter(x => x.id !== id);
+    DATABASE.save();
+    this.render();
+    DASHBOARD.render();
+    TOAST.show('Expense deleted', 'info');
+  },
+
+  render() {
+    if (!DB.expenses) DB.expenses = [];
+    const el = document.getElementById('expenses-list');
+    const sm = document.getElementById('expenses-summary');
+    if (!el) return;
+
+    // Summary cards
+    const cats  = {};
+    const total = DB.expenses.reduce((acc, e) => {
+      cats[e.category] = (cats[e.category] || 0) + e.amount;
+      return acc + e.amount;
+    }, 0);
+
+    if (sm) {
+      sm.innerHTML =
+        `<div class="dash-card c-red"><div class="dc-ico">&#128184;</div>` +
+        `<div class="dc-val c-red">${UTIL.money(total)}</div><div class="dc-lbl">Total Expenses</div></div>` +
+        Object.entries(cats).map(([k, v]) =>
+          `<div class="dash-card c-gold"><div class="dc-ico">&#128203;</div>` +
+          `<div class="dc-val c-gold">${UTIL.money(v)}</div><div class="dc-lbl">${UTIL.esc(k)}</div></div>`
+        ).join('');
+    }
+
+    if (!DB.expenses.length) {
+      el.innerHTML = UI.empty('&#128184;', 'No expenses yet', 'Add your first expense to track costs.');
+      return;
+    }
+
+    const sorted = [...DB.expenses].sort((a, b) => new Date(b.date) - new Date(a.date));
+    const rows = sorted.map(e => {
+      const cust        = e.customerId ? DB.customers.find(x => x.id === e.customerId) : null;
+      const linkedSids  = e.sids || (e.sid ? [e.sid] : []);
+      const badges      = linkedSids.map(id => {
+        const s = DB.sales.find(x => x.id === id);
+        return s ? `<span class="badge bg-blue" style="font-size:9px">${UTIL.esc(s.inv)}</span>` : '';
+      }).join(' ');
+      return `<tr>
+        <td class="dim">${UTIL.fmtDate(e.date)}</td>
+        <td><span class="badge bg-gray">${UTIL.esc(e.category)}</span></td>
+        <td class="red fw7">${UTIL.money(e.amount)}</td>
+        <td style="font-size:12.5px">${UTIL.esc(e.note || '—')}</td>
+        <td class="dim" style="font-size:11.5px">${cust ? UTIL.esc(cust.name) : '—'}</td>
+        <td style="font-size:11px">${badges || '—'}</td>
+        <td class="acts"><div class="flex-g">
+          <button class="btn btn-ghost btn-xs" onclick="EXPENSE.openForm(${Number(e.id)})">Edit</button>
+          <button class="btn btn-danger btn-xs" onclick="EXPENSE.delete(${Number(e.id)})">Del</button>
+        </div></td>
+      </tr>`;
+    }).join('');
+
+    el.innerHTML = `<div class="card"><div class="tbl-wrap"><table>
+      <thead><tr>
+        <th>Date</th><th>Category</th><th>Amount</th>
+        <th>Description</th><th>Customer</th><th>Sales</th><th>Actions</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div></div>`;
+  }
+};
+
 
 /* ════════════════════════════════
    PASSWORD CONFIRM MODAL
