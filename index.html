@@ -2040,16 +2040,33 @@ const PRODUCT = {
       }
       TOAST.show('Product updated');
     } else {
+      const newCost  = parseFloat(document.getElementById('p-cost').value) || 0;
+      const newStock = parseInt(document.getElementById('p-stock').value)   || 0;
+      const newId    = DB._pid++;
       DB.products.push({
-        id:       DB._pid++,
+        id:       newId,
         name, price,
-        cost:     parseFloat(document.getElementById('p-cost').value) || 0,
+        cost:     newCost,
         category: document.getElementById('p-cat').value,
         size:     document.getElementById('p-size').value.trim(),
-        stock:    parseInt(document.getElementById('p-stock').value) || 0,
+        stock:    newStock,
         created:  UTIL.today()
       });
-      TOAST.show('Product added');
+      // Auto-create initial batch if cost price and stock are set
+      if (newCost > 0 && newStock > 0) {
+        if (!DB.productBatches) DB.productBatches = [];
+        DB.productBatches.push({
+          id:         DB._bid++,
+          productId:  newId,
+          date:       UTIL.today(),
+          cost_price: newCost,
+          sell_price: price || 0,
+          stock:      newStock,
+          qty_orig:   newStock,
+          note:       'Initial stock'
+        });
+      }
+      TOAST.show('Product added' + (newCost > 0 && newStock > 0 ? ' — initial batch created' : ''));
     }
     DATABASE.save();
     UI.closeModal('m-product');
@@ -2389,7 +2406,8 @@ const SALE = {
     }).reduce((a, e) => a + (e.amount || 0), 0);
     const profit   = newTotal - cost - linkedExp;
     const alreadyPaid = s.paid || 0;
-    const refund      = Math.max(0, alreadyPaid - newTotal);
+    const refund      = alreadyPaid > newTotal ? alreadyPaid - newTotal : 0;
+    const stillOwed   = alreadyPaid < newTotal ? newTotal - alreadyPaid : 0;
     const el = document.getElementById('brk-preview');
     el.innerHTML =
       `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:8px">
@@ -2408,14 +2426,22 @@ const SALE = {
       </div>
       ${refund > 0
         ? `<div style="background:rgba(229,62,90,.12);border:1px solid rgba(229,62,90,.3);border-radius:6px;padding:10px 12px;margin-bottom:8px">
-             <div style="font-size:10px;color:var(--red);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px">⚠ Refund Required</div>
+             <div style="font-size:10px;color:var(--red);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px">↩ Refund Required</div>
              <div style="display:flex;justify-content:space-between;align-items:center">
-               <span style="font-size:12.5px">Customer paid <strong>${UTIL.money(alreadyPaid)}</strong> but new total is <strong>${UTIL.money(newTotal)}</strong></span>
-               <span class="red mono" style="font-size:18px;font-weight:800">${UTIL.money(refund)}</span>
+               <span style="font-size:12.5px">Customer paid <strong>${UTIL.money(alreadyPaid)}</strong> — new total <strong>${UTIL.money(newTotal)}</strong></span>
+               <span class="red mono" style="font-size:18px;font-weight:800">↩ ${UTIL.money(refund)}</span>
              </div>
              <div style="font-size:11px;color:var(--red);margin-top:3px">Return ${UTIL.money(refund)} to customer</div>
            </div>`
-        : ''}
+        : stillOwed > 0
+        ? `<div style="background:rgba(229,62,90,.08);border:1px solid rgba(229,62,90,.2);border-radius:6px;padding:10px 12px;margin-bottom:8px">
+             <div style="font-size:10px;color:var(--red);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px">⚠ Still Pending</div>
+             <div style="display:flex;justify-content:space-between;align-items:center">
+               <span style="font-size:12.5px">Customer paid <strong>${UTIL.money(alreadyPaid)}</strong> — still owes</span>
+               <span class="red mono" style="font-size:18px;font-weight:800">${UTIL.money(stillOwed)}</span>
+             </div>
+           </div>`
+        : '<div style="background:rgba(31,184,90,.08);border:1px solid rgba(31,184,90,.2);border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:12.5px;color:var(--green-l)">✓ Customer paid in full — no refund, no pending</div>'}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div>
           <div style="font-size:10px;color:var(--text-3);margin-bottom:2px">Customer Paid</div>
@@ -2452,14 +2478,16 @@ const SALE = {
         return (e.sids || (e.sid ? [e.sid] : [])).includes(s.id);
       }).reduce((a, e) => a + (e.amount || 0), 0);
       const alreadyPaid = s.paid || 0;
-      const refundAmt   = Math.max(0, alreadyPaid - newTotal); // customer overpaid
+      // If customer overpaid → refund them; if underpaid → still pending
+      const refundAmt   = alreadyPaid > newTotal ? alreadyPaid - newTotal : 0;
+      const newPending  = alreadyPaid < newTotal ? newTotal - alreadyPaid : 0;
       s.guarantee_mm = gmm;
       s.used_mm      = used;
       s.rate_per_mm  = rate;
       s.total        = newTotal;
-      s.paid         = Math.min(alreadyPaid, newTotal); // paid can't exceed new total
-      s.pending      = 0;                               // nothing more to collect
-      s.refund       = refundAmt;                       // amount to return to customer
+      s.paid         = Math.min(alreadyPaid, newTotal);
+      s.pending      = newPending;   // still owed if underpaid
+      s.refund       = refundAmt;    // to return if overpaid
       s.profit       = newTotal - cost - linkedExp;
       s.isBroken     = true;
       s.status       = 'completed';
@@ -2735,8 +2763,8 @@ const SALE = {
         <td class="acts"><div class="flex-g">
           <button class="btn btn-ghost btn-xs" onclick="SALE.viewDetail(${s.id})">View</button>
           <button class="btn btn-ghost btn-xs" onclick="INVOICE.open(${s.id})">Invoice</button>
-          <button class="btn btn-danger btn-xs" onclick="SALE.openBroken(${s.id})">Broken</button>
-          ${s.pending > 0 ? `<button class="btn btn-gold btn-xs" onclick="PAYMENT.openForSale(${s.id})">Pay</button>` : ''}
+          ${!s.isBroken ? `<button class="btn btn-danger btn-xs" onclick="SALE.openBroken(${s.id})">Broken</button>` : ''}
+          ${s.pending > 0 && !s.refund ? `<button class="btn btn-gold btn-xs" onclick="PAYMENT.openForSale(${s.id})">Pay</button>` : ''}
         </div></td>
       </tr>`;
     }).join('');
@@ -3868,12 +3896,16 @@ const EXPENSE = {
   },
 
   delete(id) {
-    if (!confirm('Delete this expense?')) return;
-    DB.expenses = (DB.expenses || []).filter(x => x.id !== id);
-    DATABASE.save();
-    this.render();
-    DASHBOARD.render();
-    TOAST.show('Expense deleted', 'info');
+    const e = (DB.expenses || []).find(x => x.id === id);
+    if (!e) return;
+    PWDMODAL.ask('Delete Expense', 'Enter password to delete this expense.').then(ok => {
+      if (!ok) return;
+      DB.expenses = (DB.expenses || []).filter(x => x.id !== id);
+      DATABASE.save();
+      EXPENSE.render();
+      DASHBOARD.render();
+      TOAST.show('Expense deleted', 'info');
+    });
   },
 
   render() {
